@@ -1,0 +1,232 @@
+import { SystemRecord, BankRecord } from '../types';
+
+export const SAMPLE_SYSTEM_RECORDS: SystemRecord[] = [
+  {
+    sys_index: 0,
+    original_row: 2,
+    amount: 145000000,
+    direction: 'CREDIT',
+    date: '1403/05/18',
+    tracking_code: '8910245',
+    account_name: 'شرکت تجارت نوین البرز',
+    doc_type: 'واریز نقدی به حساب',
+    raw_desc: 'شرکت تجارت نوین البرز واریز نقدی به حساب 8910245',
+    raw_data: [2, 145000000, null, '1403/05/18', '8910245', 'شرکت تجارت نوین البرز', 'واریز نقدی']
+  },
+  {
+    sys_index: 1,
+    original_row: 3,
+    amount: 52000000,
+    direction: 'CREDIT',
+    date: '1403/05/19',
+    tracking_code: '445102',
+    account_name: 'فروشگاه کاوه مرکزی',
+    doc_type: 'حواله ساتنا بابت فاکتور',
+    raw_desc: 'فروشگاه کاوه مرکزی حواله ساتنا بابت فاکتور 445102',
+    raw_data: [3, 52000000, null, '1403/05/19', '445102', 'فروشگاه کاوه مرکزی', 'حواله ساتنا']
+  },
+  {
+    sys_index: 2,
+    original_row: 4,
+    amount: 25000000,
+    direction: 'CREDIT',
+    date: '1403/05/20',
+    tracking_code: '778192',
+    account_name: 'بازرگانی پارس خاورمیانه',
+    doc_type: 'واریز اینترنتی پایا',
+    raw_desc: 'بازرگانی پارس خاورمیانه واریز اینترنتی پایا 778192',
+    raw_data: [4, 25000000, null, '1403/05/20', '778192', 'بازرگانی پارس خاورمیانه', 'پایا']
+  },
+  {
+    sys_index: 3,
+    original_row: 5,
+    amount: 18500000,
+    direction: 'DEBIT',
+    date: '1403/05/20',
+    tracking_code: '661023',
+    account_name: 'بیمه تامین اجتماعی شعبه ۳',
+    doc_type: 'برداشت چک تضمینی',
+    raw_desc: 'بیمه تامین اجتماعی شعبه ۳ برداشت چک تضمینی 661023',
+    raw_data: [5, null, 18500000, '1403/05/20', '661023', 'بیمه تامین اجتماعی', 'چک']
+  },
+  {
+    sys_index: 4,
+    original_row: 6,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/21',
+    tracking_code: '',
+    account_name: 'خدمات فنی و مهندسی آریا',
+    doc_type: 'واریز فیش نقدی',
+    raw_desc: 'خدمات فنی و مهندسی آریا واریز فیش نقدی',
+    raw_data: [6, 10000000, null, '1403/05/21', '', 'خدمات فنی و مهندسی آریا', 'فیش']
+  },
+  {
+    sys_index: 5,
+    original_row: 7,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/21',
+    tracking_code: '',
+    account_name: 'دفتر نمایندگی اصفهان',
+    doc_type: 'واریز فیش نقدی',
+    raw_desc: 'دفتر نمایندگی اصفهان واریز فیش نقدی',
+    raw_data: [7, 10000000, null, '1403/05/21', '', 'دفتر نمایندگی اصفهان', 'فیش']
+  },
+  {
+    sys_index: 6,
+    original_row: 8,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/22',
+    tracking_code: '',
+    account_name: 'مشتری متفرقه شعبه',
+    doc_type: 'واریز دستگاه پوز',
+    raw_desc: 'مشتری متفرقه شعبه واریز دستگاه پوز',
+    raw_data: [8, 10000000, null, '1403/05/22', '', 'مشتری متفرقه', 'پوز']
+  },
+  {
+    sys_index: 7,
+    original_row: 9,
+    amount: 3200000,
+    direction: 'DEBIT',
+    date: '1403/05/22',
+    tracking_code: '334901',
+    account_name: 'سازمان امور مالیاتی',
+    doc_type: 'پرداخت قبوض دولتی',
+    raw_desc: 'سازمان امور مالیاتی پرداخت قبوض دولتی 334901',
+    raw_data: [9, null, 3200000, '1403/05/22', '334901', 'سازمان امور مالیاتی', 'قبض']
+  },
+  {
+    sys_index: 8,
+    original_row: 10,
+    amount: 87500000,
+    direction: 'CREDIT',
+    date: '1403/05/23',
+    tracking_code: '901234',
+    account_name: 'تجهیزات صنعتی باروت‌کوب',
+    doc_type: 'تسویه پیش‌فاکتور ۷۷',
+    raw_desc: 'تجهیزات صنعتی باروت‌کوب تسویه پیش‌فاکتور ۷۷ 901234',
+    raw_data: [10, 87500000, null, '1403/05/23', '901234', 'تجهیزات صنعتی باروت‌کوب', 'حواله']
+  }
+];
+
+export const SAMPLE_BANK_RECORDS: BankRecord[] = [
+  {
+    bank_index: 0,
+    original_row: 2,
+    amount: 145000000,
+    direction: 'CREDIT',
+    date: '1403/05/18',
+    serial_no: '8910245',
+    deposit_id: '990128',
+    party_name: 'شرکت تجارت نوین البرز',
+    description: 'انتقال شتابی بابت قرارداد - پیگیری 8910245',
+    raw_desc: 'شرکت تجارت نوین البرز انتقال شتابی بابت قرارداد',
+    raw_data: [2, 145000000, null, '1403/05/18', '8910245', '990128', 'شرکت تجارت نوین البرز', 'شتاب']
+  },
+  {
+    bank_index: 1,
+    original_row: 3,
+    amount: 52000000,
+    direction: 'CREDIT',
+    date: '1403/05/19',
+    serial_no: '445102',
+    deposit_id: '',
+    party_name: 'فروشگاه کاوه مرکزی',
+    description: 'حواله بین بانکی ساتنا 445102',
+    raw_desc: 'فروشگاه کاوه مرکزی حواله بین بانکی ساتنا',
+    raw_data: [3, 52000000, null, '1403/05/19', '445102', '', 'فروشگاه کاوه مرکزی', 'ساتنا']
+  },
+  {
+    bank_index: 2,
+    original_row: 4,
+    amount: 25000000,
+    direction: 'CREDIT',
+    date: '1403/05/20',
+    serial_no: '778192',
+    deposit_id: '12004',
+    party_name: 'پارس خاورمیانه',
+    description: 'انتقال پایا از بانک ملت کد 778192',
+    raw_desc: 'پارس خاورمیانه انتقال پایا از بانک ملت',
+    raw_data: [4, 25000000, null, '1403/05/20', '778192', '12004', 'پارس خاورمیانه', 'پایا']
+  },
+  {
+    bank_index: 3,
+    original_row: 5,
+    amount: 18500000,
+    direction: 'DEBIT',
+    date: '1403/05/20',
+    serial_no: '661023',
+    deposit_id: '',
+    party_name: 'تامین اجتماعی ش۳',
+    description: 'کارمزد و چک وصولی 661023',
+    raw_desc: 'تامین اجتماعی ش۳ کارمزد و چک وصولی',
+    raw_data: [5, null, 18500000, '1403/05/20', '661023', '', 'تامین اجتماعی ش۳', 'چک']
+  },
+  {
+    bank_index: 4,
+    original_row: 6,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/21',
+    serial_no: '',
+    deposit_id: '',
+    party_name: 'فنی و مهندسی آریا',
+    description: 'واریز اینترنتی همراه بانک',
+    raw_desc: 'فنی و مهندسی آریا واریز اینترنتی همراه بانک',
+    raw_data: [6, 10000000, null, '1403/05/21', '', '', 'فنی و مهندسی آریا', 'همراه بانک']
+  },
+  {
+    bank_index: 5,
+    original_row: 7,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/21',
+    serial_no: '',
+    deposit_id: '',
+    party_name: 'نمایندگی اصفهان',
+    description: 'واریز نقدی پایانه خودپرداز',
+    raw_desc: 'نمایندگی اصفهان واریز نقدی پایانه خودپرداز',
+    raw_data: [7, 10000000, null, '1403/05/21', '', '', 'نمایندگی اصفهان', 'خودپرداز']
+  },
+  {
+    bank_index: 6,
+    original_row: 8,
+    amount: 10000000,
+    direction: 'CREDIT',
+    date: '1403/05/22',
+    serial_no: '',
+    deposit_id: '',
+    party_name: 'کارتخوان فروشگاهی',
+    description: 'تسویه دستگاه کارتخوان شاپرک',
+    raw_desc: 'کارتخوان فروشگاهی تسویه دستگاه کارتخوان شاپرک',
+    raw_data: [8, 10000000, null, '1403/05/22', '', '', 'کارتخوان فروشگاهی', 'شاپرک']
+  },
+  {
+    bank_index: 7,
+    original_row: 9,
+    amount: 3200000,
+    direction: 'DEBIT',
+    date: '1403/05/22',
+    serial_no: '334901',
+    deposit_id: '99410',
+    party_name: 'امور مالیاتی کشور',
+    description: 'پرداخت الکترونیکی شناسه 334901',
+    raw_desc: 'امور مالیاتی کشور پرداخت الکترونیکی',
+    raw_data: [9, null, 3200000, '1403/05/22', '334901', '99410', 'امور مالیاتی کشور', 'قبض']
+  },
+  {
+    bank_index: 8,
+    original_row: 10,
+    amount: 87500000,
+    direction: 'CREDIT',
+    date: '1403/05/23',
+    serial_no: '901234',
+    deposit_id: '88701',
+    party_name: 'صنایع باروت کوب',
+    description: 'واریز حواله اینترنتی ملت 901234',
+    raw_desc: 'صنایع باروت کوب واریز حواله اینترنتی ملت',
+    raw_data: [10, 87500000, null, '1403/05/23', '901234', '88701', 'صنایع باروت کوب', 'ملت']
+  }
+];

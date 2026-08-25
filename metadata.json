@@ -1,0 +1,6 @@
+{
+  "name": "Baroutkoub Bank Reconciliation",
+  "description": "Smart multi-layered bank and accounting reconciliation system for Iranian banking with Jalali calendar support, Excel processing, and interactive manual review.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
