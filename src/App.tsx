@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   FileSpreadsheet,
   Layers,
-  TableProperties,
+  History,
   Database,
   CheckCircle2,
   AlertTriangle,
@@ -22,13 +22,13 @@ import {
 } from './types';
 import { ProcessingTab } from './components/ProcessingTab';
 import { ReviewTab } from './components/ReviewTab';
-import { TransactionsTableTab } from './components/TransactionsTableTab';
+import { HistoryTab } from './components/HistoryTab';
 import { KnowledgeBaseTab } from './components/KnowledgeBaseTab';
 import { ReconciliationEngine } from './utils/matcher';
 import { ExcelProcessor } from './utils/excelIo';
 import { SAMPLE_SYSTEM_RECORDS, SAMPLE_BANK_RECORDS } from './utils/sampleData';
 
-type ActiveTab = 'processing' | 'review' | 'transactions' | 'kb';
+type ActiveTab = 'processing' | 'review' | 'history' | 'kb';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('processing');
@@ -317,16 +317,21 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab('transactions')}
+              onClick={() => setActiveTab('history')}
               className={`py-3 px-4 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
-                activeTab === 'transactions'
+                activeTab === 'history'
                   ? 'border-blue-600 text-blue-600 bg-blue-50/50'
                   : 'border-transparent text-slate-600 hover:text-slate-900'
               }`}
-              id="tab-btn-transactions"
+              id="tab-btn-history"
             >
-              <TableProperties className="w-4 h-4" />
-              جدول جزئیات تمام تراکنش‌ها
+              <History className="w-4 h-4" />
+              تاریخچه تطبیق و رد (سوابق)
+              {dataStore && (Object.keys(dataStore.matches.sys_matches || {}).length > 0 || dataStore.rejected_sys.length > 0 || dataStore.rejected_bank.length > 0) && (
+                <span className="px-1.5 py-0.2 bg-emerald-600 text-white rounded-full text-[10px] font-mono">
+                  {(Object.keys(dataStore.matches.sys_matches || {}).length + dataStore.rejected_sys.length + dataStore.rejected_bank.length).toLocaleString('fa-IR')}
+                </span>
+              )}
             </button>
 
             <button
@@ -378,8 +383,12 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'transactions' && (
-          <TransactionsTableTab dataStore={dataStore} />
+        {activeTab === 'history' && (
+          <HistoryTab
+            dataStore={dataStore}
+            setDataStore={setDataStore}
+            onNavigateToReview={() => setActiveTab('review')}
+          />
         )}
 
         {activeTab === 'kb' && <KnowledgeBaseTab decisions={decisions} />}

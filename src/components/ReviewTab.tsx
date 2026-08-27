@@ -11,7 +11,10 @@ import {
   Hash,
   Clock,
   Layers,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calendar,
+  FilterX,
+  AlertOctagon
 } from 'lucide-react';
 import {
   SystemRecord,
@@ -20,7 +23,7 @@ import {
   TransactionDirection,
   ComparisonDirectionMode
 } from '../types';
-import { formatCurrency } from '../utils/normalization';
+import { formatCurrency, parseJalaliDate, parseAmount } from '../utils/normalization';
 
 interface ReviewTabProps {
   dataStore: ReconciliationDataStore | null;
@@ -53,6 +56,16 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
   const [selectedBankRowIdx, setSelectedBankRowIdx] = useState<number | null>(null);
   const [expandedSysGroups, setExpandedSysGroups] = useState<Record<string, boolean>>({});
   const [expandedBankGroups, setExpandedBankGroups] = useState<Record<string, boolean>>({});
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [thresholdAmountInput, setThresholdAmountInput] = useState<string>('');
+  const [rejectTargetScope, setRejectTargetScope] = useState<'BOTH' | 'SYS' | 'BANK'>('BOTH');
+
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
 
   if (!dataStore || dataStore.sys_records.length === 0) {
     return (
@@ -152,29 +165,41 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     setExpandedBankGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // 1. Auto Link Equal Groups
+  // 1. Auto Link Equal Groups (by Amount & Direction)
   const handleAutoLinkEqualGroups = () => {
     const newSysMatches = { ...dataStore.matches.sys_matches };
     const newBankMatches = { ...dataStore.matches.bank_matches };
 
     let totalPairs = 0;
     let matchedGroupsCount = 0;
-
-    const bankMap = new Map<string, GroupedBucket>();
-    bankGroups.forEach((bg) => bankMap.set(bg.key, bg));
+    const usedBankGroupKeys = new Set<string>();
 
     sysGroups.forEach((sg) => {
+      if (sg.indices.length === 0) return;
+
       const targetBankDir = directionMode === 'DIRECT' 
         ? sg.direction 
         : (sg.direction === 'CREDIT' ? 'DEBIT' : 'CREDIT');
-      const targetKey = `${sg.amount}_${targetBankDir}`;
-      const bg = bankMap.get(targetKey);
 
-      if (bg && bg.indices.length === sg.indices.length && sg.indices.length > 0) {
+      // 1. First search for strict direction match
+      let candidateBankGroup = bankGroups.find(
+        (bg) => !usedBankGroupKeys.has(bg.key) && bg.amount === sg.amount && bg.direction === targetBankDir
+      );
+
+      // 2. If not found, search for any bank group with the exact same amount that is not used yet
+      if (!candidateBankGroup) {
+        candidateBankGroup = bankGroups.find(
+          (bg) => !usedBankGroupKeys.has(bg.key) && bg.amount === sg.amount
+        );
+      }
+
+      if (candidateBankGroup && candidateBankGroup.indices.length === sg.indices.length && sg.indices.length > 0) {
+        usedBankGroupKeys.add(candidateBankGroup.key);
         const count = sg.indices.length;
+
         for (let i = 0; i < count; i++) {
           const sIdx = sg.indices[i];
-          const bIdx = bg.indices[i];
+          const bIdx = candidateBankGroup.indices[i];
           const sRec = sys_records[sIdx];
           const bRec = bank_records[bIdx];
 
@@ -214,9 +239,138 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
             }
           : null
       );
-      alert(`تعداد ${matchedGroupsCount} گروه شامل ${totalPairs} فیش با موفقیت به صورت قطعی متصل شدند و از لیست بازبینی خارج گردیدند.`);
+      setSelectedSysGroupKey(null);
+      setSelectedBankGroupKey(null);
+      setSelectedSysRowIdx(null);
+      setSelectedBankRowIdx(null);
+      showToast(`تعداد ${matchedGroupsCount} گروه شامل ${totalPairs} فیش با موفقیت به صورت قطعی متصل شدند و از لیست بازبینی خارج گردیدند.`, 'success');
     } else {
-      alert('گروهی که تعداد فیش‌های سیستم و بانک در آن دقیقاً برابر باشد یافت نشد.');
+      showToast('گروهی که تعداد فیش‌های سیستم و بانک در آن دقیقاً برابر باشد یافت نشد.', 'info');
+    }
+  };
+
+  // 1.1 Auto Link Groups by EXACT MATCHING DATE (Handles unequal total groups like 13 vs 12 by matching items with identical dates)
+  const handleAutoLinkByDateAndCount = () => {
+    const newSysMatches = { ...dataStore.matches.sys_matches };
+    const newBankMatches = { ...dataStore.matches.bank_matches };
+
+    let totalPairs = 0;
+    let matchedDatesCount = 0;
+    const usedBankIndices = new Set<number>();
+    const usedSysIndices = new Set<number>();
+
+    // For each system group in the review pool
+    sysGroups.forEach((sg) => {
+      if (sg.indices.length === 0) return;
+
+      const targetBankDir = directionMode === 'DIRECT' 
+        ? sg.direction 
+        : (sg.direction === 'CREDIT' ? 'DEBIT' : 'CREDIT');
+
+      // Candidate bank groups matching amount and direction (prefer exact matching direction)
+      const candidateBankGroups = [
+        ...bankGroups.filter((bg) => bg.amount === sg.amount && bg.direction === targetBankDir),
+        ...bankGroups.filter((bg) => bg.amount === sg.amount && bg.direction !== targetBankDir)
+      ];
+
+      // Collect available bank indices in this amount bucket
+      const availableBankIndices: number[] = [];
+      candidateBankGroups.forEach((bg) => {
+        bg.indices.forEach((bIdx) => {
+          if (!usedBankIndices.has(bIdx)) {
+            availableBankIndices.push(bIdx);
+          }
+        });
+      });
+
+      if (availableBankIndices.length === 0) return;
+
+      // Group system items of this amount by unified Normalized Jalali Date
+      const sysByDate = new Map<string, number[]>();
+      sg.indices.forEach((sIdx) => {
+        if (usedSysIndices.has(sIdx)) return;
+        const sRec = sys_records[sIdx];
+        const normalizedDate = parseJalaliDate(sRec.date) || (sRec.date ? String(sRec.date).trim() : 'NO_DATE');
+        if (!sysByDate.has(normalizedDate)) {
+          sysByDate.set(normalizedDate, []);
+        }
+        sysByDate.get(normalizedDate)!.push(sIdx);
+      });
+
+      // Group bank items of this amount by unified Normalized Jalali Date
+      const bankByDate = new Map<string, number[]>();
+      availableBankIndices.forEach((bIdx) => {
+        const bRec = bank_records[bIdx];
+        const normalizedDate = parseJalaliDate(bRec.date) || (bRec.date ? String(bRec.date).trim() : 'NO_DATE');
+        if (!bankByDate.has(normalizedDate)) {
+          bankByDate.set(normalizedDate, []);
+        }
+        bankByDate.get(normalizedDate)!.push(bIdx);
+      });
+
+      // Now match subgroups where date and count are strictly identical (e.g. 1 on date X vs 1 on date X)
+      sysByDate.forEach((sDateIndices, dateKey) => {
+        if (dateKey === 'NO_DATE') return; // Skip unknown dates
+        const bDateIndices = bankByDate.get(dateKey);
+
+        // Only match if the number of items on this specific date is strictly equal (e.g. 1 vs 1, 2 vs 2).
+        // If sys has 3 and bank has 4 on that date, neither will match and all stay in review list.
+        if (bDateIndices && bDateIndices.length === sDateIndices.length && sDateIndices.length > 0) {
+          const count = sDateIndices.length;
+
+          for (let i = 0; i < count; i++) {
+            const sIdx = sDateIndices[i];
+            const bIdx = bDateIndices[i];
+            const sRec = sys_records[sIdx];
+            const bRec = bank_records[bIdx];
+
+            usedSysIndices.add(sIdx);
+            usedBankIndices.add(bIdx);
+
+            newSysMatches[sIdx] = {
+              matched_index: bIdx,
+              status: 'GREEN',
+              confidence: 1.0,
+              reason: `تطبیق قطعی بر اساس تاریخ یکسان (${dateKey}) و تعداد برابر (${count} فیش)`
+            };
+
+            newBankMatches[bIdx] = {
+              matched_index: sIdx,
+              status: 'GREEN',
+              confidence: 1.0,
+              reason: `تطبیق قطعی بر اساس تاریخ یکسان (${dateKey}) و تعداد برابر (${count} فیش)`
+            };
+
+            if (onRecordDecision) {
+              onRecordDecision(sRec, bRec, 'APPROVED', `تطبیق تاریخ و تعداد برابر (${dateKey})`);
+            }
+          }
+          totalPairs += count;
+          matchedDatesCount += 1;
+        }
+      });
+    });
+
+    if (totalPairs > 0) {
+      setDataStore((prev) =>
+        prev
+          ? {
+              ...prev,
+              matches: {
+                ...prev.matches,
+                sys_matches: newSysMatches,
+                bank_matches: newBankMatches
+              }
+            }
+          : null
+      );
+      setSelectedSysGroupKey(null);
+      setSelectedBankGroupKey(null);
+      setSelectedSysRowIdx(null);
+      setSelectedBankRowIdx(null);
+      showToast(`تعداد ${totalPairs} فیش در ${matchedDatesCount} تاریخ (با تعداد دقیقاً برابر در سیستم و بانک) متصل شدند. مواردی که تعدادشان در یک تاریخ نابرابر بود در لیست بازبینی باقی ماندند.`, 'success');
+    } else {
+      showToast('هیچ گروهی با تاریخ یکسان و تعداد دقیقاً برابر بین سیستم و بانک برای اتصال خودکار یافت نشد.', 'info');
     }
   };
 
@@ -240,7 +394,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     }
 
     if (sIndices.length === 0 || bIndices.length === 0) {
-      alert('لطفاً از هر دو سمت (سیستم و بانک) حداقل یک سطر یا گروه را انتخاب نمایید.');
+      showToast('لطفاً از هر دو سمت (سیستم و بانک) حداقل یک سطر یا گروه را انتخاب نمایید.', 'error');
       return;
     }
 
@@ -288,7 +442,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
 
     setSelectedSysRowIdx(null);
     setSelectedBankRowIdx(null);
-    alert(`تعداد ${count} فیش با موفقیت به یکدیگر متصل شدند.`);
+    showToast(`تعداد ${count} فیش با موفقیت به یکدیگر متصل شدند.`, 'success');
   };
 
   // 3. Reject Selected System Items
@@ -302,7 +456,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     }
 
     if (sIndices.length === 0) {
-      alert('لطفاً یک سطر یا گروه از سیستم انتخاب نمایید.');
+      showToast('لطفاً یک سطر یا گروه از سیستم انتخاب نمایید.', 'error');
       return;
     }
 
@@ -328,7 +482,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     );
 
     setSelectedSysRowIdx(null);
-    alert(`تعداد ${sIndices.length} فیش سیستم رد شد و به عنوان مغایرت قرمز ثبت گردید.`);
+    showToast(`تعداد ${sIndices.length} فیش سیستم رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success');
   };
 
   // 4. Reject Selected Bank Items
@@ -342,7 +496,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     }
 
     if (bIndices.length === 0) {
-      alert('لطفاً یک سطر یا گروه از بانک انتخاب نمایید.');
+      showToast('لطفاً یک سطر یا گروه از بانک انتخاب نمایید.', 'error');
       return;
     }
 
@@ -368,23 +522,127 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     );
 
     setSelectedBankRowIdx(null);
-    alert(`تعداد ${bIndices.length} فیش بانک رد شد و به عنوان مغایرت قرمز ثبت گردید.`);
+    showToast(`تعداد ${bIndices.length} فیش بانک رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success');
+  };
+
+  // 5. Reject by Threshold Amount (Equal or Smaller)
+  const handleRejectByThreshold = () => {
+    const thresholdAmt = parseAmount(thresholdAmountInput);
+    if (thresholdAmt === null || thresholdAmt <= 0) {
+      showToast('لطفاً یک مبلغ معتبر و بزرگتر از صفر برای آستانه رد کردن وارد نمایید.', 'error');
+      return;
+    }
+
+    const newSysMatches = { ...dataStore.matches.sys_matches };
+    const newBankMatches = { ...dataStore.matches.bank_matches };
+    const newRejectedSys = new Set(dataStore.rejected_sys);
+    const newRejectedBank = new Set(dataStore.rejected_bank);
+
+    let rejectedSysCount = 0;
+    let rejectedBankCount = 0;
+
+    // Reject in System Groups
+    if (rejectTargetScope === 'BOTH' || rejectTargetScope === 'SYS') {
+      sysGroups.forEach((sg) => {
+        if (sg.amount <= thresholdAmt) {
+          sg.indices.forEach((sIdx) => {
+            newRejectedSys.add(sIdx);
+            delete newSysMatches[sIdx];
+            rejectedSysCount++;
+          });
+        }
+      });
+    }
+
+    // Reject in Bank Groups
+    if (rejectTargetScope === 'BOTH' || rejectTargetScope === 'BANK') {
+      bankGroups.forEach((bg) => {
+        if (bg.amount <= thresholdAmt) {
+          bg.indices.forEach((bIdx) => {
+            newRejectedBank.add(bIdx);
+            delete newBankMatches[bIdx];
+            rejectedBankCount++;
+          });
+        }
+      });
+    }
+
+    const totalRejected = rejectedSysCount + rejectedBankCount;
+    if (totalRejected === 0) {
+      showToast(`هیچ فیشی با مبلغ کمتر یا مساوی ${formatCurrency(thresholdAmt)} ریال در لیست بازبینی یافت نشد.`, 'info');
+      return;
+    }
+
+    setDataStore((prev) =>
+      prev
+        ? {
+            ...prev,
+            matches: {
+              ...prev.matches,
+              sys_matches: newSysMatches,
+              bank_matches: newBankMatches
+            },
+            rejected_sys: Array.from(newRejectedSys),
+            rejected_bank: Array.from(newRejectedBank)
+          }
+        : null
+    );
+
+    setSelectedSysGroupKey(null);
+    setSelectedBankGroupKey(null);
+    setSelectedSysRowIdx(null);
+    setSelectedBankRowIdx(null);
+    showToast(
+      `تعداد مجموع ${totalRejected} فیش با مبلغ کمتر یا مساوی ${formatCurrency(thresholdAmt)} ریال رد شدند (${rejectedSysCount} سیستم، ${rejectedBankCount} بانک).`,
+      'success'
+    );
   };
 
   return (
     <div className="space-y-4" id="review-tab-container">
-      {/* Top Action Bar & Color Badges */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
-        <button
-          onClick={handleAutoLinkEqualGroups}
-          className="w-full md:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
-          id="btn-auto-link-equal-groups"
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border animate-fade-in max-w-md ${
+            toastMessage.type === 'success'
+              ? 'bg-slate-900 border-emerald-500/50'
+              : toastMessage.type === 'error'
+              ? 'bg-rose-900 border-rose-500/50'
+              : 'bg-slate-800 border-slate-600'
+          }`}
         >
-          <Zap className="w-4 h-4 text-amber-300" />
-          اتصال خودکار تمام گروه‌هایی که تعداد و ماهیت برابر دارند (Auto-Link)
-        </button>
+          {toastMessage.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+          {toastMessage.type === 'error' && <XCircle className="w-5 h-5 text-rose-400 shrink-0" />}
+          {toastMessage.type === 'info' && <Layers className="w-5 h-5 text-blue-400 shrink-0" />}
+          <span className="text-xs md:text-sm font-medium">{toastMessage.text}</span>
+        </div>
+      )}
 
-        <div className="flex items-center gap-3 text-xs font-semibold">
+      {/* Top Action Bar & Color Badges */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col xl:flex-row items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+          <button
+            onClick={handleAutoLinkEqualGroups}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
+            id="btn-auto-link-equal-groups"
+            title="تطبیق خودکار تمام مبالغی که تعداد کل آن‌ها در سیستم و بانک برابر است"
+          >
+            <Zap className="w-4 h-4 text-amber-300" />
+            اتصال خودکار تمام گروه‌های هم‌تعداد و هم‌ماهیت
+          </button>
+
+          <button
+            onClick={handleAutoLinkByDateAndCount}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
+            id="btn-auto-link-date-and-count"
+            title="تطبیق فیش‌هایی از یک مبلغ که در یک تاریخ معین، تعداد برابری در سیستم و بانک دارند"
+          >
+            <Calendar className="w-4 h-4 text-amber-300" />
+            اتصال بر اساس تاریخ و تعداد یکسان (باقی‌ماندن مبالغ نامتعادل)
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 text-xs font-semibold shrink-0">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 rounded-md">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
             بستانکار (واریز / طلب)
@@ -393,6 +651,61 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
             <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
             بدهکار (برداشت / بدهی)
           </span>
+        </div>
+      </div>
+
+      {/* Threshold Rejection Panel */}
+      <div className="bg-rose-50/60 border border-rose-200 rounded-xl p-3.5 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 w-full md:w-auto">
+          <div className="p-2 bg-rose-100 text-rose-700 rounded-lg shrink-0">
+            <FilterX className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-rose-950">رد دسته‌جمعی مبالغ خرد یا مشخص (مغایرت قطعی)</h4>
+            <p className="text-[11px] text-rose-800/80">فیش‌های بازبینی با مبلغ برابر یا کوچکتر از مقدار زیر، مستقیماً به لیست مغایرت‌های قرمز منتقل می‌شوند.</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+          <select
+            value={rejectTargetScope}
+            onChange={(e) => setRejectTargetScope(e.target.value as any)}
+            className="text-xs font-medium bg-white border border-rose-300 rounded-lg px-2.5 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-rose-500"
+          >
+            <option value="BOTH">هم سیستم و هم بانک</option>
+            <option value="SYS">فقط فیش‌های سیستم</option>
+            <option value="BANK">فقط فیش‌های بانک</option>
+          </select>
+
+          <div className="relative flex items-center">
+            <input
+              type="text"
+              placeholder="مثال: 50,000,000 یا 50000000"
+              value={thresholdAmountInput}
+              onChange={(e) => {
+                const raw = e.target.value;
+                const parsed = parseAmount(raw);
+                if (parsed !== null && !isNaN(parsed)) {
+                  setThresholdAmountInput(parsed.toLocaleString('en-US'));
+                } else {
+                  setThresholdAmountInput(raw);
+                }
+              }}
+              className="text-xs font-mono font-semibold bg-white border border-rose-300 rounded-lg pl-10 pr-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500 w-44"
+              id="input-reject-threshold-amount"
+            />
+            <span className="absolute left-2.5 text-[11px] font-bold text-slate-400 select-none">ریال</span>
+          </div>
+
+          <button
+            onClick={handleRejectByThreshold}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
+            id="btn-reject-threshold"
+            title="رد کردن فیش‌های دارای مبلغ کمتر یا مساوی این مقدار"
+          >
+            <AlertOctagon className="w-3.5 h-3.5" />
+            رد مبالغ ≤ سقف واردشده
+          </button>
         </div>
       </div>
 

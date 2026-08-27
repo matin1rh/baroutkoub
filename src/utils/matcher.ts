@@ -37,9 +37,16 @@ export function computePairScore(
   sysRow: SystemRecord,
   bankRow: BankRecord,
   isUnique: boolean,
-  isTomanMatch: boolean,
   maxDateDiff: number = 5
 ): ScoreMeta {
+  // Hard Constraint: Amounts MUST be exactly equal (normalized)
+  if (sysRow.amount !== bankRow.amount) {
+    return {
+      score: 0,
+      reason: 'عدم تطابق مبلغ'
+    };
+  }
+
   const sysTrack = normalizeDigits(sysRow.tracking_code).trim();
   const bankSerial = normalizeDigits(bankRow.serial_no).trim();
   const bankDepId = normalizeDigits(bankRow.deposit_id).trim();
@@ -52,7 +59,8 @@ export function computePairScore(
   const datePenalty = (dateDiff !== null && dateDiff > maxDateDiff) ? 0.08 : 0.0;
 
   // 1. Exact match with tracking code or bank serial / deposit ID
-  if (sysTrack && sysTrack.length >= 3) {
+  // Note: Only consider strong tracking codes with length >= 4 to avoid false positive short numeric tokens
+  if (sysTrack && sysTrack.length >= 4) {
     if (sysTrack === bankSerial || sysTrack === bankDepId) {
       return {
         score: Math.max(0.7, 0.99 - datePenalty),
@@ -60,21 +68,21 @@ export function computePairScore(
       };
     }
 
-    if (normalizeDigits(bankDesc).includes(sysTrack)) {
+    // Exact word/token matching for tracking code within bank description (preventing arbitrary substring collisions)
+    const tokens = extractNumericTokens(bankDesc, Math.min(sysTrack.length, 4));
+    let tokenMatch = false;
+    for (const tok of tokens) {
+      if (sysTrack === tok) {
+        tokenMatch = true;
+        break;
+      }
+    }
+
+    if (tokenMatch) {
       return {
         score: Math.max(0.7, 0.98 - datePenalty),
         reason: `کد رهگیری (${sysTrack}) در شرح بانک قرار دارد`
       };
-    }
-
-    const tokens = extractNumericTokens(bankDesc, sysTrack.length);
-    for (const tok of tokens) {
-      if (sysTrack === tok || sysTrack.includes(tok) || tok.includes(sysTrack)) {
-        return {
-          score: Math.max(0.7, 0.96 - datePenalty),
-          reason: `تطبیق توکن رهگیری (${sysTrack}) با شرح بانک`
-        };
-      }
     }
   }
 
@@ -83,7 +91,7 @@ export function computePairScore(
   const descSim = computeTextSimilarity(sysAccName, bankDesc);
   const bestSim = Math.max(nameSim, descSim);
 
-  if (bestSim >= 0.35) {
+  if (bestSim >= 0.40) {
     return {
       score: Math.max(0.7, 0.94 - datePenalty),
       reason: `تشابه نام و شرح تراکنش (${sysAccName || bankParty || 'انطباق متن'})`
@@ -91,14 +99,6 @@ export function computePairScore(
   }
 
   // 3. Amount matching
-  if (isTomanMatch) {
-    return {
-      score: Math.max(0.7, 0.88 - datePenalty),
-      reason: 'تطبیق مبلغ با ضریب ریال/تومان (نیازمند بررسی)',
-      isYellow: true
-    };
-  }
-
   if (isUnique) {
     return {
       score: Math.max(0.7, 0.92 - datePenalty),
@@ -221,16 +221,15 @@ export class ReconciliationEngine {
     interface Candidate {
       sIdx: number;
       bIdx: number;
-      isToman: boolean;
     }
 
     const candidates: Candidate[] = [];
 
-    const addMatchingBankIndices = (sIdx: number, sRec: SystemRecord, bankIndices: number[], isToman: boolean) => {
+    const addMatchingBankIndices = (sIdx: number, sRec: SystemRecord, bankIndices: number[]) => {
       bankIndices.forEach((bIdx) => {
         const bRec = bankRecords[bIdx];
         if (checkDirectionMatch(sRec.direction, bRec.direction, directionMode)) {
-          candidates.push({ sIdx, bIdx, isToman });
+          candidates.push({ sIdx, bIdx });
         }
       });
     };
@@ -238,17 +237,9 @@ export class ReconciliationEngine {
     sysRecords.forEach((sRec, sIdx) => {
       const sAmt = sRec.amount;
 
-      // Direct amount match
+      // Direct exact amount match only
       if (bankByAmt.has(sAmt)) {
-        addMatchingBankIndices(sIdx, sRec, bankByAmt.get(sAmt)!, false);
-      }
-
-      // 10x multiplier / Toman match (10x or 0.1x)
-      if (sAmt % 10 === 0 && bankByAmt.has(Math.floor(sAmt / 10))) {
-        addMatchingBankIndices(sIdx, sRec, bankByAmt.get(Math.floor(sAmt / 10))!, true);
-      }
-      if (bankByAmt.has(sAmt * 10)) {
-        addMatchingBankIndices(sIdx, sRec, bankByAmt.get(sAmt * 10)!, true);
+        addMatchingBankIndices(sIdx, sRec, bankByAmt.get(sAmt)!);
       }
     });
 
@@ -277,14 +268,14 @@ export class ReconciliationEngine {
       new Array(uniqueBank.length).fill(null)
     );
 
-    candidates.forEach(({ sIdx, bIdx, isToman }) => {
+    candidates.forEach(({ sIdx, bIdx }) => {
       const i = sysMap.get(sIdx)!;
       const j = bankMap.get(bIdx)!;
       const sRec = sysRecords[sIdx];
       const bRec = bankRecords[bIdx];
 
       const isUnique = (bankByAmt.get(sRec.amount)?.length || 0) === 1;
-      const meta = computePairScore(sRec, bRec, isUnique, isToman, maxDays);
+      const meta = computePairScore(sRec, bRec, isUnique, maxDays);
 
       scoreMatrix[i][j] = meta.score;
       metaMatrix[i][j] = meta;

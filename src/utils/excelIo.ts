@@ -13,220 +13,431 @@ import {
   normalizePersianText
 } from './normalization';
 
+export interface ParsedExcelFile<T> {
+  records: T[];
+  headers: { index: number; label: string }[];
+  detectedMapping: Record<string, number>;
+  rawRows: any[][];
+  headerIdx: number;
+}
+
 export class ExcelProcessor {
   /**
-   * Find the best header row based on keyword matches
+   * Find the best header row based on keyword matches across all initial rows
    */
-  static findHeaderRow(rows: any[][], keywords: string[]): { headerIdx: number; header: string[] } {
-    for (let rIdx = 0; rIdx < Math.min(10, rows.length); rIdx++) {
+  static findHeaderRow(rows: any[][], keywords: string[]): { headerIdx: number; header: string[]; headersWithIndex: { index: number; label: string }[] } {
+    let bestHeaderIdx = 0;
+    let maxMatch = 0;
+    let bestHeader: string[] = [];
+
+    const searchLimit = Math.min(25, rows.length);
+    for (let rIdx = 0; rIdx < searchLimit; rIdx++) {
       const row = rows[rIdx];
-      if (!Array.isArray(row)) continue;
-      const rowStr = row.map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : '')).join(' ');
-      const matchCount = keywords.filter((kw) => rowStr.includes(normalizePersianText(kw))).length;
-      if (matchCount >= 2) {
-        return {
-          headerIdx: rIdx,
-          header: row.map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : ''))
-        };
+      if (!Array.isArray(row) || row.length === 0) continue;
+      
+      const rowCleaned = row.map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : ''));
+      const rowStr = rowCleaned.join(' ');
+      
+      let matchCount = 0;
+      for (const kw of keywords) {
+        const nKw = normalizePersianText(kw);
+        if (rowStr.includes(nKw)) {
+          matchCount++;
+        }
+      }
+
+      if (matchCount > maxMatch) {
+        maxMatch = matchCount;
+        bestHeaderIdx = rIdx;
+        bestHeader = rowCleaned;
       }
     }
+
+    let finalIdx = bestHeaderIdx;
+    let finalHeader = bestHeader;
+
+    if (maxMatch < 1) {
+      // Fallback to first non-empty row
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        const row = rows[rIdx];
+        if (Array.isArray(row) && row.some((c) => c !== null && c !== undefined && String(c).trim() !== '')) {
+          finalIdx = rIdx;
+          finalHeader = row.map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : ''));
+          break;
+        }
+      }
+      if (finalHeader.length === 0 && rows[0]) {
+        finalIdx = 0;
+        finalHeader = rows[0].map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : ''));
+      }
+    }
+
+    const rawHeaderRow = rows[finalIdx] || [];
+    const headersWithIndex: { index: number; label: string }[] = [];
+    for (let c = 0; c < Math.max(rawHeaderRow.length, finalHeader.length); c++) {
+      const label = String(rawHeaderRow[c] !== undefined && rawHeaderRow[c] !== null ? rawHeaderRow[c] : `ستون ${c + 1}`).trim();
+      headersWithIndex.push({ index: c, label: label || `ستون ${c + 1}` });
+    }
+
     return {
-      headerIdx: 0,
-      header: (rows[0] || []).map((c) => (c !== null && c !== undefined ? normalizePersianText(c) : ''))
+      headerIdx: finalIdx,
+      header: finalHeader,
+      headersWithIndex
     };
   }
 
   /**
-   * Parse System Excel file from ArrayBuffer
+   * Parse System Excel file with optional column mapping overrides
    */
-  static readSystemFile(buffer: ArrayBuffer): SystemRecord[] {
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const firstSheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as any[][];
-
-    if (!rows || rows.length === 0) return [];
-
-    const { headerIdx, header } = this.findHeaderRow(rows, [
-      'بستانکار',
-      'بدهکار',
-      'نام حساب',
-      'تاریخ',
-      'کد رهگیری',
-      'سند'
-    ]);
-
-    const colKeywords: Record<string, string[]> = {
-      credit: ['بستانکار مالی', 'بستانکار', 'مبلغ بستانکار', 'گردش بستانکار'],
-      debit: ['بدهکار مالی', 'بدهکار', 'مبلغ بدهکار', 'گردش بدهکار'],
-      op_date: ['تاریخ عملیات', 'تاريخ عمليات', 'تاریخ ثبت'],
-      doc_date: ['تاریخ سند', 'تاريخ سند', 'تاریخ صدور'],
-      check_date: ['تاریخ چک', 'تاريخ چک', 'تاریخ سررسید'],
-      account_name: ['نام حساب', 'طرف حساب', 'حساب', 'نام شخص', 'طرف حساب تفصیلی'],
-      doc_type: ['نوع سند', 'شرح سند', 'نوع عملیات', 'شرح'],
-      tracking: ['شماره چک / کد رهگیری', 'کد رهگیری', 'شماره چک', 'رهگیری', 'شماره سند', 'کد پیگیری', 'سند']
-    };
-
-    const idxMap: Record<string, number> = {};
-    for (const [key, kws] of Object.entries(colKeywords)) {
-      for (const kw of kws) {
-        const nKw = normalizePersianText(kw);
-        const foundIndex = header.findIndex((h) => h.includes(nKw));
-        if (foundIndex !== -1) {
-          idxMap[key] = foundIndex;
-          break;
-        }
+  static readSystemFile(
+    buffer: ArrayBuffer,
+    customMapping?: { dateCol?: number; trackingCol?: number; descCol?: number }
+  ): ParsedExcelFile<SystemRecord> {
+    try {
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
       }
-    }
-
-    const records: SystemRecord[] = [];
-    const dataRows = rows.slice(headerIdx + 1);
-
-    dataRows.forEach((row, rowRelIdx) => {
-      if (!row || !row.some((c) => c !== null && c !== '')) return;
-
-      const origRowNumber = headerIdx + 2 + rowRelIdx;
-      const creditVal = idxMap.credit !== undefined ? row[idxMap.credit] : null;
-      const debitVal = idxMap.debit !== undefined ? row[idxMap.debit] : null;
-
-      const credit = parseAmount(creditVal) || 0;
-      const debit = parseAmount(debitVal) || 0;
-
-      let amount = 0;
-      let direction: TransactionDirection = 'CREDIT';
-
-      if (credit > 0) {
-        amount = credit;
-        direction = 'CREDIT';
-      } else if (debit > 0) {
-        amount = debit;
-        direction = 'DEBIT';
-      } else {
-        return;
-      }
-
-      let rawDate: any = null;
-      for (const dCol of ['op_date', 'doc_date', 'check_date']) {
-        if (idxMap[dCol] !== undefined && row[idxMap[dCol]]) {
-          rawDate = row[idxMap[dCol]];
-          break;
+      
+      // Find the sheet with the most rows
+      let bestSheet = workbook.Sheets[workbook.SheetNames[0]];
+      let maxRowCount = 0;
+      for (const sheetName of workbook.SheetNames) {
+        const s = workbook.Sheets[sheetName];
+        if (s && s['!ref']) {
+          const range = XLSX.utils.decode_range(s['!ref']);
+          const count = range.e.r - range.s.r + 1;
+          if (count > maxRowCount) {
+            maxRowCount = count;
+            bestSheet = s;
+          }
         }
       }
 
-      const jDate = parseJalaliDate(rawDate);
-      const tracking = idxMap.tracking !== undefined ? normalizeDigits(row[idxMap.tracking] || '').trim() : '';
-      const accName = idxMap.account_name !== undefined ? String(row[idxMap.account_name] || '').trim() : '';
-      const docType = idxMap.doc_type !== undefined ? String(row[idxMap.doc_type] || '').trim() : '';
+      const rows = XLSX.utils.sheet_to_json(bestSheet, { header: 1, defval: null }) as any[][];
+      if (!rows || rows.length === 0) {
+        return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
+      }
 
-      records.push({
-        sys_index: records.length,
-        original_row: origRowNumber,
-        amount,
-        direction,
-        date: jDate,
-        tracking_code: tracking,
-        account_name: accName,
-        doc_type: docType,
-        raw_desc: `${accName} ${docType} ${tracking}`.trim(),
-        raw_data: row
+      const { headerIdx, header, headersWithIndex } = this.findHeaderRow(rows, [
+        'بستانکار',
+        'بدهکار',
+        'نام حساب',
+        'تاریخ',
+        'کد رهگیری',
+        'سند',
+        'طرف حساب',
+        'شرح',
+        'مبلغ'
+      ]);
+
+      const colKeywords: Record<string, string[]> = {
+        credit: ['بستانکار مالی', 'بستانکار', 'مبلغ بستانکار', 'گردش بستانکار', 'بستانكار', 'مبلغ واریز', 'واریز'],
+        debit: ['بدهکار مالی', 'بدهکار', 'مبلغ بدهکار', 'گردش بدهکار', 'بدهكار', 'مبلغ برداشت', 'برداشت'],
+        op_date: ['تاریخ عملیات', 'تاريخ عمليات', 'تاریخ ثبت', 'تاریخ اقدام', 'تاریخ فاکتور', 'تاریخ رسید'],
+        doc_date: ['تاریخ سند', 'تاريخ سند', 'تاریخ صدور', 'تاریخ فاکتور', 'تاریخ موثر', 'تاریخ شمسی', 'تاریخ', 'تاريخ', 'زمان', 'date'],
+        check_date: ['تاریخ چک', 'تاريخ چک', 'تاریخ سررسید', 'سررسید'],
+        account_name: ['نام حساب', 'طرف حساب', 'حساب', 'نام شخص', 'طرف حساب تفصیلی', 'نام مشتری', 'تفصیلی'],
+        doc_type: ['نوع سند', 'شرح سند', 'نوع عملیات', 'شرح', 'شرح آرتیکل', 'عنوان'],
+        tracking: ['شماره چک / کد رهگیری', 'کد رهگیری', 'شماره چک', 'رهگیری', 'شماره سند', 'کد پیگیری', 'سند', 'شماره پیگیری', 'ارجاع']
+      };
+
+      const idxMap: Record<string, number> = {};
+      for (const [key, kws] of Object.entries(colKeywords)) {
+        for (const kw of kws) {
+          const nKw = normalizePersianText(kw);
+          const foundIndex = header.findIndex((h) => h.includes(nKw));
+          if (foundIndex !== -1) {
+            idxMap[key] = foundIndex;
+            break;
+          }
+        }
+      }
+
+      // Apply overrides if passed
+      if (customMapping) {
+        if (customMapping.dateCol !== undefined && customMapping.dateCol >= 0) {
+          idxMap.op_date = customMapping.dateCol;
+          delete idxMap.doc_date;
+          delete idxMap.check_date;
+        }
+        if (customMapping.trackingCol !== undefined && customMapping.trackingCol >= 0) {
+          idxMap.tracking = customMapping.trackingCol;
+        }
+        if (customMapping.descCol !== undefined && customMapping.descCol >= 0) {
+          idxMap.doc_type = customMapping.descCol;
+        }
+      }
+
+      const records: SystemRecord[] = [];
+      const dataRows = rows.slice(headerIdx + 1);
+
+      dataRows.forEach((row, rowRelIdx) => {
+        if (!row || !Array.isArray(row) || !row.some((c) => c !== null && c !== '')) return;
+
+        const origRowNumber = headerIdx + 2 + rowRelIdx;
+        const creditVal = idxMap.credit !== undefined ? row[idxMap.credit] : null;
+        const debitVal = idxMap.debit !== undefined ? row[idxMap.debit] : null;
+
+        const credit = parseAmount(creditVal) || 0;
+        const debit = parseAmount(debitVal) || 0;
+
+        let amount = 0;
+        let direction: TransactionDirection = 'CREDIT';
+
+        if (credit > 0) {
+          amount = credit;
+          direction = 'CREDIT';
+        } else if (debit > 0) {
+          amount = debit;
+          direction = 'DEBIT';
+        } else {
+          // Check if there is a single amount column with sign
+          for (let c = 0; c < row.length; c++) {
+            const parsed = parseAmount(row[c]);
+            if (parsed && parsed > 0) {
+              const headerTitle = header[c] || '';
+              if (headerTitle.includes('بدهکار')) {
+                amount = parsed;
+                direction = 'DEBIT';
+                break;
+              } else if (headerTitle.includes('بستانکار') || headerTitle.includes('مبلغ')) {
+                amount = parsed;
+                direction = 'CREDIT';
+                break;
+              }
+            }
+          }
+          if (amount === 0) return;
+        }
+
+        let rawDate: any = null;
+        if (customMapping?.dateCol !== undefined && customMapping.dateCol >= 0) {
+          rawDate = row[customMapping.dateCol];
+        } else {
+          for (const dCol of ['op_date', 'doc_date', 'check_date']) {
+            if (idxMap[dCol] !== undefined && row[idxMap[dCol]]) {
+              rawDate = row[idxMap[dCol]];
+              break;
+            }
+          }
+        }
+
+        if (!rawDate) {
+          // Look for any date-like string or date cell in the row
+          for (const cell of row) {
+            if (cell !== null && cell !== undefined && cell !== '') {
+              const testJ = parseJalaliDate(cell);
+              if (testJ) {
+                rawDate = cell;
+                break;
+              }
+            }
+          }
+        }
+
+        const jDate = parseJalaliDate(rawDate);
+        const tracking = idxMap.tracking !== undefined ? normalizeDigits(row[idxMap.tracking] || '').trim() : '';
+        const accName = idxMap.account_name !== undefined ? String(row[idxMap.account_name] || '').trim() : '';
+        const docType = idxMap.doc_type !== undefined ? String(row[idxMap.doc_type] || '').trim() : '';
+
+        records.push({
+          sys_index: records.length,
+          original_row: origRowNumber,
+          amount,
+          direction,
+          date: jDate,
+          tracking_code: tracking,
+          account_name: accName,
+          doc_type: docType,
+          raw_desc: `${accName} ${docType} ${tracking}`.trim(),
+          raw_data: row
+        });
       });
-    });
 
-    return records;
+      return {
+        records,
+        headers: headersWithIndex,
+        detectedMapping: idxMap,
+        rawRows: rows,
+        headerIdx
+      };
+    } catch (err) {
+      console.error('Error parsing system Excel file:', err);
+      return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
+    }
   }
 
   /**
-   * Parse Bank Excel file from ArrayBuffer
+   * Parse Bank Excel file with optional column mapping overrides
    */
-  static readBankFile(buffer: ArrayBuffer): BankRecord[] {
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const firstSheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as any[][];
-
-    if (!rows || rows.length === 0) return [];
-
-    const { headerIdx, header } = this.findHeaderRow(rows, [
-      'مبلغ گردش بستانکار',
-      'مبلغ گردش بدهکار',
-      'شرح',
-      'واریز کننده',
-      'سریال',
-      'شناسه واریز'
-    ]);
-
-    const colKeywords: Record<string, string[]> = {
-      credit: ['مبلغ گردش بستانکار', 'گردش بستانکار', 'بستانکار', 'واریز', 'مبلغ واریز'],
-      debit: ['مبلغ گردش بدهکار', 'گردش بدهکار', 'بدهکار', 'برداشت', 'مبلغ برداشت'],
-      desc: ['شرح', 'شرح تراکنش', 'توضیحات'],
-      party: ['واریز کننده/ ذیتفع', 'واریز کننده', 'ذینفع', 'طرف تراکنش', 'صاحب حساب', 'نام واریز کننده'],
-      serial: ['شماره سریال', 'سریال', 'شماره پیگیری', 'کد رهگیری', 'شماره سند'],
-      deposit_id: ['شناسه واریز', 'شناسه', 'کد شناسه'],
-      date: ['تاریخ', 'تاریخ تراکنش', 'تاریخ سند', 'زمان']
-    };
-
-    const idxMap: Record<string, number> = {};
-    for (const [key, kws] of Object.entries(colKeywords)) {
-      for (const kw of kws) {
-        const nKw = normalizePersianText(kw);
-        const foundIndex = header.findIndex((h) => h.includes(nKw));
-        if (foundIndex !== -1) {
-          idxMap[key] = foundIndex;
-          break;
+  static readBankFile(
+    buffer: ArrayBuffer,
+    customMapping?: { dateCol?: number; trackingCol?: number; descCol?: number }
+  ): ParsedExcelFile<BankRecord> {
+    try {
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
+      }
+      
+      let bestSheet = workbook.Sheets[workbook.SheetNames[0]];
+      let maxRowCount = 0;
+      for (const sheetName of workbook.SheetNames) {
+        const s = workbook.Sheets[sheetName];
+        if (s && s['!ref']) {
+          const range = XLSX.utils.decode_range(s['!ref']);
+          const count = range.e.r - range.s.r + 1;
+          if (count > maxRowCount) {
+            maxRowCount = count;
+            bestSheet = s;
+          }
         }
       }
-    }
 
-    const records: BankRecord[] = [];
-    const dataRows = rows.slice(headerIdx + 1);
-
-    dataRows.forEach((row, rowRelIdx) => {
-      if (!row || !row.some((c) => c !== null && c !== '')) return;
-
-      const origRowNumber = headerIdx + 2 + rowRelIdx;
-      const creditVal = idxMap.credit !== undefined ? row[idxMap.credit] : null;
-      const debitVal = idxMap.debit !== undefined ? row[idxMap.debit] : null;
-
-      const credit = parseAmount(creditVal) || 0;
-      const debit = parseAmount(debitVal) || 0;
-
-      let amount = 0;
-      let direction: TransactionDirection = 'CREDIT';
-
-      if (credit > 0) {
-        amount = credit;
-        direction = 'CREDIT';
-      } else if (debit > 0) {
-        amount = debit;
-        direction = 'DEBIT';
-      } else {
-        return;
+      const rows = XLSX.utils.sheet_to_json(bestSheet, { header: 1, defval: null }) as any[][];
+      if (!rows || rows.length === 0) {
+        return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
       }
 
-      const rawDate = idxMap.date !== undefined ? row[idxMap.date] : null;
-      const jDate = parseJalaliDate(rawDate);
+      const { headerIdx, header, headersWithIndex } = this.findHeaderRow(rows, [
+        'مبلغ گردش بستانکار',
+        'مبلغ گردش بدهکار',
+        'شرح',
+        'واریز کننده',
+        'سریال',
+        'شناسه واریز',
+        'بستانکار',
+        'بدهکار',
+        'واریز',
+        'برداشت'
+      ]);
 
-      const desc = idxMap.desc !== undefined ? String(row[idxMap.desc] || '').trim() : '';
-      const party = idxMap.party !== undefined ? String(row[idxMap.party] || '').trim() : '';
-      const serial = idxMap.serial !== undefined ? normalizeDigits(row[idxMap.serial] || '').trim() : '';
-      const depId = idxMap.deposit_id !== undefined ? normalizeDigits(row[idxMap.deposit_id] || '').trim() : '';
+      const colKeywords: Record<string, string[]> = {
+        credit: ['مبلغ گردش بستانکار', 'گردش بستانکار', 'بستانکار', 'واریز', 'مبلغ واریز', 'بستانكار', 'واریزی', 'دریافت'],
+        debit: ['مبلغ گردش بدهکار', 'گردش بدهکار', 'بدهکار', 'برداشت', 'مبلغ برداشت', 'بدهكار', 'برداشتی', 'پرداخت'],
+        desc: ['شرح', 'شرح تراکنش', 'توضیحات', 'شرح سند', 'جزئیات'],
+        party: ['واریز کننده/ ذیتفع', 'واریز کننده', 'ذینفع', 'طرف تراکنش', 'صاحب حساب', 'نام واریز کننده', 'طرف حساب', 'فرستنده', 'گیرنده'],
+        serial: ['شماره سریال', 'سریال', 'شماره پیگیری', 'کد رهگیری', 'شماره سند', 'شماره ارجاع', 'کد پیگیری', 'پیگیری'],
+        deposit_id: ['شناسه واریز', 'شناسه', 'کد شناسه', 'شناسه پرداخت'],
+        date: ['تاریخ موثر', 'تاریخ عملیات', 'تاريخ تراکنش', 'تاریخ تراکنش', 'تاریخ سند', 'تاریخ ثبت', 'تاریخ اقدام', 'تاریخ شمسی', 'تاریخ', 'تاريخ', 'زمان', 'date']
+      };
 
-      records.push({
-        bank_index: records.length,
-        original_row: origRowNumber,
-        amount,
-        direction,
-        date: jDate,
-        description: desc,
-        party_name: party,
-        serial_no: serial,
-        deposit_id: depId,
-        raw_desc: `${party} ${desc}`.trim(),
-        raw_data: row
+      const idxMap: Record<string, number> = {};
+      for (const [key, kws] of Object.entries(colKeywords)) {
+        for (const kw of kws) {
+          const nKw = normalizePersianText(kw);
+          const foundIndex = header.findIndex((h) => h.includes(nKw));
+          if (foundIndex !== -1) {
+            idxMap[key] = foundIndex;
+            break;
+          }
+        }
+      }
+
+      // Apply overrides if passed
+      if (customMapping) {
+        if (customMapping.dateCol !== undefined && customMapping.dateCol >= 0) {
+          idxMap.date = customMapping.dateCol;
+        }
+        if (customMapping.trackingCol !== undefined && customMapping.trackingCol >= 0) {
+          idxMap.serial = customMapping.trackingCol;
+        }
+        if (customMapping.descCol !== undefined && customMapping.descCol >= 0) {
+          idxMap.desc = customMapping.descCol;
+        }
+      }
+
+      const records: BankRecord[] = [];
+      const dataRows = rows.slice(headerIdx + 1);
+
+      dataRows.forEach((row, rowRelIdx) => {
+        if (!row || !Array.isArray(row) || !row.some((c) => c !== null && c !== '')) return;
+
+        const origRowNumber = headerIdx + 2 + rowRelIdx;
+        const creditVal = idxMap.credit !== undefined ? row[idxMap.credit] : null;
+        const debitVal = idxMap.debit !== undefined ? row[idxMap.debit] : null;
+
+        const credit = parseAmount(creditVal) || 0;
+        const debit = parseAmount(debitVal) || 0;
+
+        let amount = 0;
+        let direction: TransactionDirection = 'CREDIT';
+
+        if (credit > 0) {
+          amount = credit;
+          direction = 'CREDIT';
+        } else if (debit > 0) {
+          amount = debit;
+          direction = 'DEBIT';
+        } else {
+          // Check if there is a single amount column
+          for (let c = 0; c < row.length; c++) {
+            const parsed = parseAmount(row[c]);
+            if (parsed && parsed > 0) {
+              const headerTitle = header[c] || '';
+              if (headerTitle.includes('بدهکار') || headerTitle.includes('برداشت')) {
+                amount = parsed;
+                direction = 'DEBIT';
+                break;
+              } else if (headerTitle.includes('بستانکار') || headerTitle.includes('واریز') || headerTitle.includes('مبلغ')) {
+                amount = parsed;
+                direction = 'CREDIT';
+                break;
+              }
+            }
+          }
+          if (amount === 0) return;
+        }
+
+        let rawDate = (customMapping?.dateCol !== undefined && customMapping.dateCol >= 0)
+          ? row[customMapping.dateCol]
+          : (idxMap.date !== undefined ? row[idxMap.date] : null);
+
+        if (!rawDate) {
+          for (const cell of row) {
+            if (cell !== null && cell !== undefined && cell !== '') {
+              const testJ = parseJalaliDate(cell);
+              if (testJ) {
+                rawDate = cell;
+                break;
+              }
+            }
+          }
+        }
+
+        const jDate = parseJalaliDate(rawDate);
+        const desc = idxMap.desc !== undefined ? String(row[idxMap.desc] || '').trim() : '';
+        const party = idxMap.party !== undefined ? String(row[idxMap.party] || '').trim() : '';
+        const serial = idxMap.serial !== undefined ? normalizeDigits(row[idxMap.serial] || '').trim() : '';
+        const depId = idxMap.deposit_id !== undefined ? normalizeDigits(row[idxMap.deposit_id] || '').trim() : '';
+
+        records.push({
+          bank_index: records.length,
+          original_row: origRowNumber,
+          amount,
+          direction,
+          date: jDate,
+          description: desc,
+          party_name: party,
+          serial_no: serial,
+          deposit_id: depId,
+          raw_desc: `${party} ${desc}`.trim(),
+          raw_data: row
+        });
       });
-    });
 
-    return records;
+      return {
+        records,
+        headers: headersWithIndex,
+        detectedMapping: idxMap,
+        rawRows: rows,
+        headerIdx
+      };
+    } catch (err) {
+      console.error('Error parsing bank Excel file:', err);
+      return { records: [], headers: [], detectedMapping: {}, rawRows: [], headerIdx: 0 };
+    }
   }
 
   /**

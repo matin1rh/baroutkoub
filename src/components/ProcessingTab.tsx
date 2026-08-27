@@ -12,7 +12,11 @@ import {
   Sparkles,
   RefreshCw,
   Database,
-  ArrowRightLeft
+  ArrowRightLeft,
+  SlidersHorizontal,
+  FileText,
+  Hash,
+  Clock
 } from 'lucide-react';
 import {
   SystemRecord,
@@ -70,6 +74,23 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
   const [sysIsToman, setSysIsToman] = useState<boolean>(false);
   const [bankIsToman, setBankIsToman] = useState<boolean>(false);
 
+  // Stored ArrayBuffers for live re-parsing upon column selection change
+  const [sysBuffer, setSysBuffer] = useState<ArrayBuffer | null>(null);
+  const [bankBuffer, setBankBuffer] = useState<ArrayBuffer | null>(null);
+
+  // Column header lists for dropdown selectors
+  const [sysHeaders, setSysHeaders] = useState<{ index: number; label: string }[]>([]);
+  const [bankHeaders, setBankHeaders] = useState<{ index: number; label: string }[]>([]);
+
+  // Selected column mapping states (-1 means auto-detect / none)
+  const [sysDateCol, setSysDateCol] = useState<number>(-1);
+  const [sysTrackingCol, setSysTrackingCol] = useState<number>(-1);
+  const [sysDescCol, setSysDescCol] = useState<number>(-1);
+
+  const [bankDateCol, setBankDateCol] = useState<number>(-1);
+  const [bankTrackingCol, setBankTrackingCol] = useState<number>(-1);
+  const [bankDescCol, setBankDescCol] = useState<number>(-1);
+
   const sysInputRef = useRef<HTMLInputElement | null>(null);
   const bankInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -79,20 +100,34 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
     setSysFileName(file.name);
     try {
       const buffer = await file.arrayBuffer();
-      const records = ExcelProcessor.readSystemFile(buffer);
-      if (records.length === 0) {
+      setSysBuffer(buffer);
+      const parsed = ExcelProcessor.readSystemFile(buffer);
+      if (parsed.records.length === 0) {
         alert('هیچ رکورد معتبری در فایل سیستم یافت نشد.');
         return;
       }
+      setSysHeaders(parsed.headers);
+      
+      // Auto detected initial mappings
+      const detectedDate = parsed.detectedMapping.op_date ?? parsed.detectedMapping.doc_date ?? -1;
+      const detectedTrack = parsed.detectedMapping.tracking ?? -1;
+      const detectedDesc = parsed.detectedMapping.doc_type ?? -1;
+
+      setSysDateCol(detectedDate);
+      setSysTrackingCol(detectedTrack);
+      setSysDescCol(detectedDesc);
+
+      const finalRecords = parsed.records;
       if (sysIsToman) {
-        records.forEach((r) => {
+        finalRecords.forEach((r) => {
           r.amount = Math.round(r.amount * 10);
         });
       }
+
       setDataStore((prev) => ({
         sys_name: file.name,
         bank_name: prev?.bank_name,
-        sys_records: records,
+        sys_records: finalRecords,
         bank_records: prev?.bank_records || [],
         matches: { sys_matches: {}, bank_matches: {}, detected_mode: 'NONE' },
         rejected_sys: [],
@@ -109,21 +144,34 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
     setBankFileName(file.name);
     try {
       const buffer = await file.arrayBuffer();
-      const records = ExcelProcessor.readBankFile(buffer);
-      if (records.length === 0) {
+      setBankBuffer(buffer);
+      const parsed = ExcelProcessor.readBankFile(buffer);
+      if (parsed.records.length === 0) {
         alert('هیچ رکورد معتبری در فایل بانک یافت نشد.');
         return;
       }
+      setBankHeaders(parsed.headers);
+
+      const detectedDate = parsed.detectedMapping.date ?? -1;
+      const detectedTrack = parsed.detectedMapping.serial ?? -1;
+      const detectedDesc = parsed.detectedMapping.desc ?? -1;
+
+      setBankDateCol(detectedDate);
+      setBankTrackingCol(detectedTrack);
+      setBankDescCol(detectedDesc);
+
+      const finalRecords = parsed.records;
       if (bankIsToman) {
-        records.forEach((r) => {
+        finalRecords.forEach((r) => {
           r.amount = Math.round(r.amount * 10);
         });
       }
+
       setDataStore((prev) => ({
         sys_name: prev?.sys_name,
         bank_name: file.name,
         sys_records: prev?.sys_records || [],
-        bank_records: records,
+        bank_records: finalRecords,
         matches: { sys_matches: {}, bank_matches: {}, detected_mode: 'NONE' },
         rejected_sys: [],
         rejected_bank: []
@@ -133,9 +181,77 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
     }
   };
 
+  // Re-parse System file when user manually selects columns
+  const reparseSystemFile = (
+    newDateCol: number,
+    newTrackingCol: number,
+    newDescCol: number,
+    isToman: boolean = sysIsToman
+  ) => {
+    if (!sysBuffer) return;
+    const parsed = ExcelProcessor.readSystemFile(sysBuffer, {
+      dateCol: newDateCol >= 0 ? newDateCol : undefined,
+      trackingCol: newTrackingCol >= 0 ? newTrackingCol : undefined,
+      descCol: newDescCol >= 0 ? newDescCol : undefined
+    });
+
+    if (isToman) {
+      parsed.records.forEach((r) => {
+        r.amount = Math.round(r.amount * 10);
+      });
+    }
+
+    setDataStore((prev) =>
+      prev
+        ? {
+            ...prev,
+            sys_records: parsed.records,
+            matches: { sys_matches: {}, bank_matches: {}, detected_mode: 'NONE' },
+            rejected_sys: [],
+            rejected_bank: []
+          }
+        : null
+    );
+  };
+
+  // Re-parse Bank file when user manually selects columns
+  const reparseBankFile = (
+    newDateCol: number,
+    newTrackingCol: number,
+    newDescCol: number,
+    isToman: boolean = bankIsToman
+  ) => {
+    if (!bankBuffer) return;
+    const parsed = ExcelProcessor.readBankFile(bankBuffer, {
+      dateCol: newDateCol >= 0 ? newDateCol : undefined,
+      trackingCol: newTrackingCol >= 0 ? newTrackingCol : undefined,
+      descCol: newDescCol >= 0 ? newDescCol : undefined
+    });
+
+    if (isToman) {
+      parsed.records.forEach((r) => {
+        r.amount = Math.round(r.amount * 10);
+      });
+    }
+
+    setDataStore((prev) =>
+      prev
+        ? {
+            ...prev,
+            bank_records: parsed.records,
+            matches: { sys_matches: {}, bank_matches: {}, detected_mode: 'NONE' },
+            rejected_sys: [],
+            rejected_bank: []
+          }
+        : null
+    );
+  };
+
   const handleSysTomanToggle = (isToman: boolean) => {
     setSysIsToman(isToman);
-    if (dataStore && dataStore.sys_records.length > 0) {
+    if (sysBuffer) {
+      reparseSystemFile(sysDateCol, sysTrackingCol, sysDescCol, isToman);
+    } else if (dataStore && dataStore.sys_records.length > 0) {
       const factor = isToman ? 10 : 0.1;
       const updated = dataStore.sys_records.map((r) => ({
         ...r,
@@ -157,7 +273,9 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
 
   const handleBankTomanToggle = (isToman: boolean) => {
     setBankIsToman(isToman);
-    if (dataStore && dataStore.bank_records.length > 0) {
+    if (bankBuffer) {
+      reparseBankFile(bankDateCol, bankTrackingCol, bankDescCol, isToman);
+    } else if (dataStore && dataStore.bank_records.length > 0) {
       const factor = isToman ? 10 : 0.1;
       const updated = dataStore.bank_records.map((r) => ({
         ...r,
@@ -192,7 +310,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
             تطبیق هوشمند و چندلایه‌ای اسناد حسابداری و صورتحساب بانک
           </h2>
           <p className="text-blue-100 text-sm mt-1 leading-relaxed">
-            فایل‌های اکسل نرم‌افزار حسابداری (سیست) و پرینت گردش حساب بانکی (ملت، ملی، سامان و ...) را بارگذاری نمایید یا از داده‌های نمونه استفاده کنید.
+            فایل‌های اکسل نرم‌افزار حسابداری (سیست) و پرینت گردش حساب بانکی (ملت، ملی، سامان و ...) را بارگذاری نمایید و ستون‌های مربوط به کدپیگیری، توضیحات و تاریخ را در صورت تمایل تنظیم نمایید.
           </p>
         </div>
         <button
@@ -249,6 +367,93 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
             </p>
             <p className="text-xs text-slate-400 mt-1">کلیک کنید تا فایل سیستم را انتخاب کنید</p>
           </div>
+
+          {/* System Column Mapping Dropdowns */}
+          {sysHeaders.length > 0 && (
+            <div className="mt-3.5 p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-2.5" id="sys-column-mapping-panel">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-blue-700" />
+                  انتخاب و تطبیق ستون‌های فایل سیستم:
+                </span>
+                <span className="text-[10px] text-blue-600 font-medium">تشخیص خودکار فعال است</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                {/* Tracking Code Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <Hash className="w-3 h-3 text-slate-500" />
+                    ستون کد رهگیری:
+                  </label>
+                  <select
+                    value={sysTrackingCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setSysTrackingCol(val);
+                      reparseSystemFile(sysDateCol, val, sysDescCol);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {sysHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Description Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <FileText className="w-3 h-3 text-slate-500" />
+                    ستون توضیحات / شرح:
+                  </label>
+                  <select
+                    value={sysDescCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setSysDescCol(val);
+                      reparseSystemFile(sysDateCol, sysTrackingCol, val);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {sysHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Date Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-slate-500" />
+                    ستون تاریخ:
+                  </label>
+                  <select
+                    value={sysDateCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setSysDateCol(val);
+                      reparseSystemFile(val, sysTrackingCol, sysDescCol);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {sysHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* System Toman Checkbox */}
           <div className="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between bg-slate-50/80 px-3 py-2 rounded-lg">
@@ -315,6 +520,93 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
             </p>
             <p className="text-xs text-slate-400 mt-1">کلیک کنید تا فایل صورتحساب بانک را انتخاب کنید</p>
           </div>
+
+          {/* Bank Column Mapping Dropdowns */}
+          {bankHeaders.length > 0 && (
+            <div className="mt-3.5 p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-2.5" id="bank-column-mapping-panel">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-700" />
+                  انتخاب و تطبیق ستون‌های فایل بانک:
+                </span>
+                <span className="text-[10px] text-indigo-600 font-medium">تشخیص خودکار فعال است</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                {/* Tracking / Serial Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <Hash className="w-3 h-3 text-slate-500" />
+                    ستون کد رهگیری / سریال:
+                  </label>
+                  <select
+                    value={bankTrackingCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBankTrackingCol(val);
+                      reparseBankFile(bankDateCol, val, bankDescCol);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {bankHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Description Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <FileText className="w-3 h-3 text-slate-500" />
+                    ستون شرح / توضیحات:
+                  </label>
+                  <select
+                    value={bankDescCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBankDescCol(val);
+                      reparseBankFile(bankDateCol, bankTrackingCol, val);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {bankHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Date Column */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-slate-500" />
+                    ستون تاریخ:
+                  </label>
+                  <select
+                    value={bankDateCol}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBankDateCol(val);
+                      reparseBankFile(val, bankTrackingCol, bankDescCol);
+                    }}
+                    className="w-full text-xs bg-white border border-slate-300 rounded-md p-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium"
+                  >
+                    <option value={-1}>تشخیص خودکار</option>
+                    {bankHeaders.map((h) => (
+                      <option key={h.index} value={h.index}>
+                        {h.label} (ستون {h.index + 1})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Bank Toman Checkbox */}
           <div className="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between bg-slate-50/80 px-3 py-2 rounded-lg">
