@@ -28,7 +28,6 @@ import {
 import { ExcelProcessor } from '../utils/excelIo';
 import { ReconciliationEngine } from '../utils/matcher';
 import { formatCurrency } from '../utils/normalization';
-import { SAMPLE_SYSTEM_RECORDS, SAMPLE_BANK_RECORDS } from '../utils/sampleData';
 
 interface ProcessingTabProps {
   dataStore: ReconciliationDataStore | null;
@@ -47,7 +46,6 @@ interface ProcessingTabProps {
   onDownloadSys: () => void;
   onDownloadBank: () => void;
   onDownloadReport: () => void;
-  onLoadSampleData: () => void;
 }
 
 export const ProcessingTab: React.FC<ProcessingTabProps> = ({
@@ -66,8 +64,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
   summary,
   onDownloadSys,
   onDownloadBank,
-  onDownloadReport,
-  onLoadSampleData
+  onDownloadReport
 }) => {
   const [sysFileName, setSysFileName] = useState<string>('');
   const [bankFileName, setBankFileName] = useState<string>('');
@@ -302,27 +299,6 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
 
   return (
     <div className="space-y-6" id="processing-tab-container">
-      {/* Top Banner / Sample Data Quick Loader */}
-      <div className="bg-gradient-to-l from-blue-900 to-indigo-800 text-white rounded-xl p-5 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 border border-blue-700">
-        <div>
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-amber-300" />
-            تطبیق هوشمند و چندلایه‌ای اسناد حسابداری و صورتحساب بانک
-          </h2>
-          <p className="text-blue-100 text-sm mt-1 leading-relaxed">
-            فایل‌های اکسل نرم‌افزار حسابداری (سیست) و پرینت گردش حساب بانکی (ملت، ملی، سامان و ...) را بارگذاری نمایید و ستون‌های مربوط به کدپیگیری، توضیحات و تاریخ را در صورت تمایل تنظیم نمایید.
-          </p>
-        </div>
-        <button
-          onClick={onLoadSampleData}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-sm rounded-lg shadow-sm transition-colors whitespace-nowrap cursor-pointer"
-          id="btn-load-sample-data"
-        >
-          <Database className="w-4 h-4" />
-          بارگذاری داده‌های آزمایشی
-        </button>
-      </div>
-
       {/* File Upload Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* System File Box */}
@@ -338,7 +314,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 ۱
               </div>
               <div>
-                <h3 className="font-bold text-slate-800 text-base">فایل اکسل سیستم مالی (سیست)</h3>
+                <h3 className="font-bold text-slate-800 text-base">فایل اکسل سیستم مالی</h3>
                 <p className="text-xs text-slate-500">حاوی ستون‌های بدهکار، بستانکار، کد رهگیری، نام حساب</p>
               </div>
             </div>
@@ -491,7 +467,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 ۲
               </div>
               <div>
-                <h3 className="font-bold text-slate-800 text-base">فایل اکسل صورتحساب بانک (ملت و ...)</h3>
+                <h3 className="font-bold text-slate-800 text-base">فایل اکسل صورتحساب بانک</h3>
                 <p className="text-xs text-slate-500">حاوی ستون‌های گردش بدهکار/بستانکار، شرح، شناسه، سریال</p>
               </div>
             </div>
@@ -867,7 +843,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 id="btn-download-sys-excel"
               >
                 <Download className="w-4 h-4" />
-                اکسل سیست تطبیق‌یافته
+                اکسل سیستم تطبیق‌یافته
               </button>
 
               <button

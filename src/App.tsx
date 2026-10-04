@@ -26,7 +26,6 @@ import { HistoryTab } from './components/HistoryTab';
 import { KnowledgeBaseTab } from './components/KnowledgeBaseTab';
 import { ReconciliationEngine } from './utils/matcher';
 import { ExcelProcessor } from './utils/excelIo';
-import { SAMPLE_SYSTEM_RECORDS, SAMPLE_BANK_RECORDS } from './utils/sampleData';
 
 type ActiveTab = 'processing' | 'review' | 'history' | 'kb';
 
@@ -104,25 +103,6 @@ export default function App() {
       matched_amount: matchedAmount
     };
   }, [dataStore]);
-
-  // Load sample dataset
-  const handleLoadSampleData = () => {
-    const store: ReconciliationDataStore = {
-      sys_name: 'سیسست_نمونه_۱۴۰۳.xlsx',
-      bank_name: 'صورتحساب_ملت_نمونه.xlsx',
-      sys_records: SAMPLE_SYSTEM_RECORDS,
-      bank_records: SAMPLE_BANK_RECORDS,
-      matches: { sys_matches: {}, bank_matches: {}, detected_mode: 'NONE' },
-      rejected_sys: [],
-      rejected_bank: []
-    };
-    setDataStore(store);
-
-    // Auto trigger reconcile on sample data
-    setTimeout(() => {
-      runReconciliation(store);
-    }, 100);
-  };
 
   // Reconcile logic
   const runReconciliation = async (customStore?: ReconciliationDataStore) => {
@@ -209,7 +189,7 @@ export default function App() {
       dataStore.bank_records,
       dataStore.matches
     );
-    downloadBlob(buffer, 'سیست_تطبیق_یافته.xlsx');
+    downloadBlob(buffer, 'سیستم_تطبیق_یافته.xlsx');
   };
 
   const handleDownloadBank = async () => {
@@ -258,15 +238,9 @@ export default function App() {
                 <Landmark className="w-5 h-5" />
               </div>
               <div>
-                <h1 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                  تطبیق هوشمند تراکنش‌های بانکی
-                  <span className="text-[11px] font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-                    باروت‌کوب
-                  </span>
+                <h1 className="text-base font-extrabold text-slate-900">
+                  تطبیق هوشمند باروت کوب
                 </h1>
-                <p className="text-xs text-slate-500">
-                  مغایرت‌گیری چندلایه‌ای، پشتیبانی تقویم شمسی و انتساب هوشمند مجارستانی
-                </p>
               </div>
             </div>
 
@@ -370,7 +344,6 @@ export default function App() {
             onDownloadSys={handleDownloadSys}
             onDownloadBank={handleDownloadBank}
             onDownloadReport={handleDownloadReport}
-            onLoadSampleData={handleLoadSampleData}
           />
         )}
 

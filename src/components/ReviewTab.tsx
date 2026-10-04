@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Link2,
   XCircle,
@@ -14,7 +14,10 @@ import {
   ArrowRightLeft,
   Calendar,
   FilterX,
-  AlertOctagon
+  AlertOctagon,
+  Search,
+  X,
+  RotateCcw
 } from 'lucide-react';
 import {
   SystemRecord,
@@ -23,7 +26,118 @@ import {
   TransactionDirection,
   ComparisonDirectionMode
 } from '../types';
-import { formatCurrency, parseJalaliDate, parseAmount } from '../utils/normalization';
+import { formatCurrency, parseJalaliDate, parseAmount, normalizeDigits } from '../utils/normalization';
+
+function matchesSearch(val: any, query: string): boolean {
+  if (val === null || val === undefined) return false;
+  const str = String(val).trim();
+  if (!str || !query) return false;
+  const cleanQ = query.trim().toLowerCase();
+  const lowerStr = str.toLowerCase();
+  if (lowerStr.includes(cleanQ)) return true;
+
+  // Normalized digit matching (e.g. Persian/Arabic numbers vs English numbers)
+  const normVal = normalizeDigits(lowerStr);
+  const normQ = normalizeDigits(cleanQ);
+  if (normQ && normVal.includes(normQ)) return true;
+
+  // Persian character variations
+  const pNormVal = normVal.replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+  const pNormQ = normQ.replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+  if (pNormQ && pNormVal.includes(pNormQ)) return true;
+
+  return false;
+}
+
+function matchSystemRecord(rec: SystemRecord, query: string): boolean {
+  if (!query || !query.trim()) return true;
+  const q = query.trim();
+
+  if (matchesSearch(rec.tracking_code, q)) return true;
+  if (matchesSearch(rec.raw_desc, q)) return true;
+  if (matchesSearch(rec.account_name, q)) return true;
+  if (matchesSearch(rec.doc_type, q)) return true;
+  if (matchesSearch(rec.date, q)) return true;
+  if (matchesSearch(rec.original_row, q)) return true;
+  if (matchesSearch(rec.amount, q)) return true;
+  if (matchesSearch(formatCurrency(rec.amount), q)) return true;
+
+  if (Array.isArray(rec.raw_data)) {
+    for (const cell of rec.raw_data) {
+      if (cell !== null && cell !== undefined && matchesSearch(cell, q)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function matchBankRecord(rec: BankRecord, query: string): boolean {
+  if (!query || !query.trim()) return true;
+  const q = query.trim();
+
+  if (matchesSearch(rec.description, q)) return true;
+  if (matchesSearch(rec.serial_no, q)) return true;
+  if (matchesSearch(rec.deposit_id, q)) return true;
+  if (matchesSearch(rec.party_name, q)) return true;
+  if (matchesSearch(rec.raw_desc, q)) return true;
+  if (matchesSearch(rec.date, q)) return true;
+  if (matchesSearch(rec.original_row, q)) return true;
+  if (matchesSearch(rec.amount, q)) return true;
+  if (matchesSearch(formatCurrency(rec.amount), q)) return true;
+
+  if (Array.isArray(rec.raw_data)) {
+    for (const cell of rec.raw_data) {
+      if (cell !== null && cell !== undefined && matchesSearch(cell, q)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function highlightText(val: any, query: string): React.ReactNode {
+  if (val === null || val === undefined) return null;
+  const text = String(val);
+  if (!query || !query.trim()) return text;
+
+  const q = query.trim();
+  const lowerText = text.toLowerCase();
+  const lowerQ = q.toLowerCase();
+  const idx = lowerText.indexOf(lowerQ);
+
+  if (idx !== -1) {
+    return (
+      <span>
+        {text.slice(0, idx)}
+        <mark className="bg-amber-300 text-slate-950 font-bold px-1 py-0.2 rounded shadow-xs">
+          {text.slice(idx, idx + q.length)}
+        </mark>
+        {text.slice(idx + q.length)}
+      </span>
+    );
+  }
+
+  // Check normalized digits
+  const normDigitsQ = normalizeDigits(q);
+  const normDigitsText = normalizeDigits(text);
+  const digitIdx = normDigitsText.indexOf(normDigitsQ);
+  if (digitIdx !== -1 && normDigitsQ.length > 0) {
+    return (
+      <span>
+        {text.slice(0, digitIdx)}
+        <mark className="bg-amber-300 text-slate-950 font-bold px-1 py-0.2 rounded shadow-xs">
+          {text.slice(digitIdx, digitIdx + normDigitsQ.length)}
+        </mark>
+        {text.slice(digitIdx + normDigitsQ.length)}
+      </span>
+    );
+  }
+
+  return text;
+}
 
 interface ReviewTabProps {
   dataStore: ReconciliationDataStore | null;
@@ -56,15 +170,84 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
   const [selectedBankRowIdx, setSelectedBankRowIdx] = useState<number | null>(null);
   const [expandedSysGroups, setExpandedSysGroups] = useState<Record<string, boolean>>({});
   const [expandedBankGroups, setExpandedBankGroups] = useState<Record<string, boolean>>({});
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    type: 'success' | 'error' | 'info';
+    undoAction?: () => void;
+  } | null>(null);
+  const [toastCountdown, setToastCountdown] = useState<number>(6);
+  const toastTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [thresholdAmountInput, setThresholdAmountInput] = useState<string>('');
   const [rejectTargetScope, setRejectTargetScope] = useState<'BOTH' | 'SYS' | 'BANK'>('BOTH');
+  const [sysSearchInput, setSysSearchInput] = useState<string>('');
+  const [sysActiveSearch, setSysActiveSearch] = useState<string>('');
+  const [bankSearchInput, setBankSearchInput] = useState<string>('');
+  const [bankActiveSearch, setBankActiveSearch] = useState<string>('');
 
-  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setToastMessage({ text, type });
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
+  const clearToastTimer = () => {
+    if (toastTimerRef.current) {
+      clearInterval(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => clearToastTimer();
+  }, []);
+
+  const showToast = (
+    text: string,
+    type: 'success' | 'error' | 'info' = 'success',
+    undoAction?: () => void
+  ) => {
+    clearToastTimer();
+    setToastMessage({ text, type, undoAction });
+    setToastCountdown(6);
+
+    let remaining = 6;
+    toastTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearToastTimer();
+        setToastMessage(null);
+      } else {
+        setToastCountdown(remaining);
+      }
+    }, 1000);
+  };
+
+  const createUndoSnapshot = () => {
+    if (!dataStore) return undefined;
+    const prevSysMatches = { ...dataStore.matches.sys_matches };
+    const prevBankMatches = { ...dataStore.matches.bank_matches };
+    const prevRejectedSys = [...dataStore.rejected_sys];
+    const prevRejectedBank = [...dataStore.rejected_bank];
+    const prevSysGroup = selectedSysGroupKey;
+    const prevBankGroup = selectedBankGroupKey;
+    const prevSysRow = selectedSysRowIdx;
+    const prevBankRow = selectedBankRowIdx;
+
+    return () => {
+      setDataStore((prev) =>
+        prev
+          ? {
+              ...prev,
+              matches: {
+                ...prev.matches,
+                sys_matches: prevSysMatches,
+                bank_matches: prevBankMatches
+              },
+              rejected_sys: prevRejectedSys,
+              rejected_bank: prevRejectedBank
+            }
+          : null
+      );
+      setSelectedSysGroupKey(prevSysGroup);
+      setSelectedBankGroupKey(prevBankGroup);
+      setSelectedSysRowIdx(prevSysRow);
+      setSelectedBankRowIdx(prevBankRow);
+      showToast('عملیات منسوخ شد و فیش‌ها به وضعیت قبل بازگشتند.', 'info');
+    };
   };
 
   if (!dataStore || dataStore.sys_records.length === 0) {
@@ -73,7 +256,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
         <Layers className="w-12 h-12 text-slate-300 mx-auto mb-3" />
         <h3 className="font-bold text-slate-700 text-base">هنوز داده‌ای بارگذاری یا تطبیق داده نشده است</h3>
         <p className="text-xs text-slate-400 mt-1">
-          لطفاً ابتدا از تب «پردازش و تطبیق خودکار» فایل‌های اکسل را بارگذاری و تطبیق دهید یا داده‌های آزمایشی را فعال کنید.
+          لطفاً ابتدا از تب «پردازش و تطبیق خودکار» فایل‌های اکسل را بارگذاری و تطبیق دهید.
         </p>
       </div>
     );
@@ -165,6 +348,146 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     setExpandedBankGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // Search in System Records (Filtered to selected category or global if none selected)
+  const handleSysSearch = () => {
+    const q = sysSearchInput.trim();
+    if (!q) {
+      setSysActiveSearch('');
+      showToast('لطفاً متن یا عدد مورد نظر برای جستجو در سیستم را وارد کنید.', 'info');
+      return;
+    }
+
+    setSysActiveSearch(q);
+
+    // If a group/category is selected, search within that selected category
+    if (selectedSysGroupKey) {
+      const g = sysGroups.find((sg) => sg.key === selectedSysGroupKey);
+      if (g) {
+        const matchesCount = g.indices.filter((i) => matchSystemRecord(sys_records[i], q)).length;
+        setExpandedSysGroups((prev) => ({ ...prev, [selectedSysGroupKey]: true }));
+
+        if (matchesCount > 0) {
+          showToast(`تعداد ${matchesCount} فیش منطبق با «${q}» در دسته انتخابی سیستم یافت شد.`, 'success');
+        } else {
+          // Check if other groups have matches
+          const totalInOtherGroups = sysGroups.reduce((acc, og) => {
+            if (og.key === selectedSysGroupKey) return acc;
+            return acc + og.indices.filter((i) => matchSystemRecord(sys_records[i], q)).length;
+          }, 0);
+
+          if (totalInOtherGroups > 0) {
+            showToast(
+              `در این دسته انتخابی موردی یافت نشد؛ اما در سایر دسته‌ها ${totalInOtherGroups} فیش منطبق وجود دارد.`,
+              'info'
+            );
+          } else {
+            showToast(`هیچ فیشی با مشخصات «${q}» در سیستم یافت نشد.`, 'error');
+          }
+        }
+        return;
+      }
+    }
+
+    // If no group was selected yet, find matching groups and auto-select/expand the first
+    let firstMatchingGroupKey: string | null = null;
+    let totalFound = 0;
+    const newExpanded: Record<string, boolean> = { ...expandedSysGroups };
+
+    sysGroups.forEach((sg) => {
+      const cnt = sg.indices.filter((i) => matchSystemRecord(sys_records[i], q)).length;
+      if (cnt > 0) {
+        totalFound += cnt;
+        newExpanded[sg.key] = true;
+        if (!firstMatchingGroupKey) {
+          firstMatchingGroupKey = sg.key;
+        }
+      }
+    });
+
+    if (firstMatchingGroupKey) {
+      setSelectedSysGroupKey(firstMatchingGroupKey);
+      setExpandedSysGroups(newExpanded);
+      showToast(`تعداد ${totalFound} فیش منطبق در دسته‌های سیستم یافت شد.`, 'success');
+    } else {
+      showToast(`هیچ فیشی با مشخصات «${q}» در فیش‌های سیستم یافت نشد.`, 'error');
+    }
+  };
+
+  const handleClearSysSearch = () => {
+    setSysSearchInput('');
+    setSysActiveSearch('');
+  };
+
+  // Search in Bank Records (Filtered to selected category or global if none selected)
+  const handleBankSearch = () => {
+    const q = bankSearchInput.trim();
+    if (!q) {
+      setBankActiveSearch('');
+      showToast('لطفاً متن یا عدد مورد نظر برای جستجو در بانک را وارد کنید.', 'info');
+      return;
+    }
+
+    setBankActiveSearch(q);
+
+    // If a group/category is selected, search within that selected category
+    if (selectedBankGroupKey) {
+      const g = bankGroups.find((bg) => bg.key === selectedBankGroupKey);
+      if (g) {
+        const matchesCount = g.indices.filter((i) => matchBankRecord(bank_records[i], q)).length;
+        setExpandedBankGroups((prev) => ({ ...prev, [selectedBankGroupKey]: true }));
+
+        if (matchesCount > 0) {
+          showToast(`تعداد ${matchesCount} فیش منطبق با «${q}» در دسته انتخابی بانک یافت شد.`, 'success');
+        } else {
+          // Check if other groups have matches
+          const totalInOtherGroups = bankGroups.reduce((acc, og) => {
+            if (og.key === selectedBankGroupKey) return acc;
+            return acc + og.indices.filter((i) => matchBankRecord(bank_records[i], q)).length;
+          }, 0);
+
+          if (totalInOtherGroups > 0) {
+            showToast(
+              `در این دسته انتخابی موردی یافت نشد؛ اما در سایر دسته‌ها ${totalInOtherGroups} فیش منطبق وجود دارد.`,
+              'info'
+            );
+          } else {
+            showToast(`هیچ فیشی با مشخصات «${q}» در صورتحساب بانک یافت نشد.`, 'error');
+          }
+        }
+        return;
+      }
+    }
+
+    // If no group was selected yet, find matching groups and auto-select/expand the first
+    let firstMatchingGroupKey: string | null = null;
+    let totalFound = 0;
+    const newExpanded: Record<string, boolean> = { ...expandedBankGroups };
+
+    bankGroups.forEach((bg) => {
+      const cnt = bg.indices.filter((i) => matchBankRecord(bank_records[i], q)).length;
+      if (cnt > 0) {
+        totalFound += cnt;
+        newExpanded[bg.key] = true;
+        if (!firstMatchingGroupKey) {
+          firstMatchingGroupKey = bg.key;
+        }
+      }
+    });
+
+    if (firstMatchingGroupKey) {
+      setSelectedBankGroupKey(firstMatchingGroupKey);
+      setExpandedBankGroups(newExpanded);
+      showToast(`تعداد ${totalFound} فیش منطبق در دسته‌های بانک یافت شد.`, 'success');
+    } else {
+      showToast(`هیچ فیشی با مشخصات «${q}» در صورتحساب بانک یافت نشد.`, 'error');
+    }
+  };
+
+  const handleClearBankSearch = () => {
+    setBankSearchInput('');
+    setBankActiveSearch('');
+  };
+
   // 1. Auto Link Equal Groups (by Amount & Direction)
   const handleAutoLinkEqualGroups = () => {
     const newSysMatches = { ...dataStore.matches.sys_matches };
@@ -227,6 +550,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     });
 
     if (totalPairs > 0) {
+      const undoFn = createUndoSnapshot();
       setDataStore((prev) =>
         prev
           ? {
@@ -243,7 +567,11 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       setSelectedBankGroupKey(null);
       setSelectedSysRowIdx(null);
       setSelectedBankRowIdx(null);
-      showToast(`تعداد ${matchedGroupsCount} گروه شامل ${totalPairs} فیش با موفقیت به صورت قطعی متصل شدند و از لیست بازبینی خارج گردیدند.`, 'success');
+      showToast(
+        `تعداد ${matchedGroupsCount} گروه شامل ${totalPairs} فیش با موفقیت به صورت قطعی متصل شدند و از لیست بازبینی خارج گردیدند.`,
+        'success',
+        undoFn
+      );
     } else {
       showToast('گروهی که تعداد فیش‌های سیستم و بانک در آن دقیقاً برابر باشد یافت نشد.', 'info');
     }
@@ -352,6 +680,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     });
 
     if (totalPairs > 0) {
+      const undoFn = createUndoSnapshot();
       setDataStore((prev) =>
         prev
           ? {
@@ -368,7 +697,11 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       setSelectedBankGroupKey(null);
       setSelectedSysRowIdx(null);
       setSelectedBankRowIdx(null);
-      showToast(`تعداد ${totalPairs} فیش در ${matchedDatesCount} تاریخ (با تعداد دقیقاً برابر در سیستم و بانک) متصل شدند. مواردی که تعدادشان در یک تاریخ نابرابر بود در لیست بازبینی باقی ماندند.`, 'success');
+      showToast(
+        `تعداد ${totalPairs} فیش در ${matchedDatesCount} تاریخ (با تعداد دقیقاً برابر در سیستم و بانک) متصل شدند. مواردی که تعدادشان در یک تاریخ نابرابر بود در لیست بازبینی باقی ماندند.`,
+        'success',
+        undoFn
+      );
     } else {
       showToast('هیچ گروهی با تاریخ یکسان و تعداد دقیقاً برابر بین سیستم و بانک برای اتصال خودکار یافت نشد.', 'info');
     }
@@ -427,6 +760,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       }
     }
 
+    const undoFn = createUndoSnapshot();
     setDataStore((prev) =>
       prev
         ? {
@@ -442,7 +776,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
 
     setSelectedSysRowIdx(null);
     setSelectedBankRowIdx(null);
-    showToast(`تعداد ${count} فیش با موفقیت به یکدیگر متصل شدند.`, 'success');
+    showToast(`تعداد ${count} فیش با موفقیت به یکدیگر متصل شدند.`, 'success', undoFn);
   };
 
   // 3. Reject Selected System Items
@@ -468,6 +802,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       delete newSysMatches[idx];
     });
 
+    const undoFn = createUndoSnapshot();
     setDataStore((prev) =>
       prev
         ? {
@@ -482,7 +817,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     );
 
     setSelectedSysRowIdx(null);
-    showToast(`تعداد ${sIndices.length} فیش سیستم رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success');
+    showToast(`تعداد ${sIndices.length} فیش سیستم رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success', undoFn);
   };
 
   // 4. Reject Selected Bank Items
@@ -508,6 +843,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       delete newBankMatches[idx];
     });
 
+    const undoFn = createUndoSnapshot();
     setDataStore((prev) =>
       prev
         ? {
@@ -522,7 +858,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     );
 
     setSelectedBankRowIdx(null);
-    showToast(`تعداد ${bIndices.length} فیش بانک رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success');
+    showToast(`تعداد ${bIndices.length} فیش بانک رد شد و به عنوان مغایرت قرمز ثبت گردید.`, 'success', undoFn);
   };
 
   // 5. Reject by Threshold Amount (Equal or Smaller)
@@ -573,6 +909,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
       return;
     }
 
+    const undoFn = createUndoSnapshot();
     setDataStore((prev) =>
       prev
         ? {
@@ -594,27 +931,67 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
     setSelectedBankRowIdx(null);
     showToast(
       `تعداد مجموع ${totalRejected} فیش با مبلغ کمتر یا مساوی ${formatCurrency(thresholdAmt)} ریال رد شدند (${rejectedSysCount} سیستم، ${rejectedBankCount} بانک).`,
-      'success'
+      'success',
+      undoFn
     );
   };
 
   return (
     <div className="space-y-4" id="review-tab-container">
-      {/* Toast Notification */}
+      {/* Toast Notification with 6-second countdown & Undo option */}
       {toastMessage && (
         <div
-          className={`fixed bottom-6 right-6 z-50 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border animate-fade-in max-w-md ${
+          className={`fixed bottom-6 right-6 z-50 text-white px-5 py-3.5 rounded-xl shadow-2xl flex items-center justify-between gap-4 border animate-fade-in max-w-xl ${
             toastMessage.type === 'success'
-              ? 'bg-slate-900 border-emerald-500/50'
+              ? 'bg-slate-900 border-emerald-500/60'
               : toastMessage.type === 'error'
-              ? 'bg-rose-900 border-rose-500/50'
+              ? 'bg-rose-950 border-rose-500/60'
               : 'bg-slate-800 border-slate-600'
           }`}
         >
-          {toastMessage.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
-          {toastMessage.type === 'error' && <XCircle className="w-5 h-5 text-rose-400 shrink-0" />}
-          {toastMessage.type === 'info' && <Layers className="w-5 h-5 text-blue-400 shrink-0" />}
-          <span className="text-xs md:text-sm font-medium">{toastMessage.text}</span>
+          <div className="flex items-center gap-3">
+            {toastMessage.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+            {toastMessage.type === 'error' && <XCircle className="w-5 h-5 text-rose-400 shrink-0" />}
+            {toastMessage.type === 'info' && <Layers className="w-5 h-5 text-blue-400 shrink-0" />}
+            <span className="text-xs md:text-sm font-medium leading-relaxed">{toastMessage.text}</span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {toastMessage.undoAction ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (toastMessage.undoAction) {
+                    toastMessage.undoAction();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
+                id="btn-undo-review-action"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>منسوخ کردن</span>
+                <span className="font-mono bg-slate-950/15 px-1.5 py-0.5 rounded text-[11px]">
+                  {toastCountdown.toLocaleString('fa-IR')} ثانیه
+                </span>
+              </button>
+            ) : (
+              <span className="text-[11px] font-mono bg-white/10 text-slate-200 px-2 py-1 rounded-md">
+                {toastCountdown.toLocaleString('fa-IR')} ثانیه
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                clearToastTimer();
+                setToastMessage(null);
+              }}
+              className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              title="بستن پیام"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -716,11 +1093,74 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
           <div className="bg-slate-100 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Building className="w-4 h-4 text-blue-700" />
-              <h3 className="font-bold text-slate-800 text-sm">فیش‌های سیستم (سیسست)</h3>
+              <h3 className="font-bold text-slate-800 text-sm">فیش‌های سیستم</h3>
             </div>
             <span className="text-xs font-semibold text-slate-500">
               {sysGroups.length} گروه مبلغی ({sysGroups.reduce((acc, g) => acc + g.indices.length, 0)} فیش)
             </span>
+          </div>
+
+          {/* Search Box in System Pane */}
+          <div className="p-2.5 bg-slate-50 border-b border-slate-200">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSysSearch();
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={sysSearchInput}
+                  onChange={(e) => setSysSearchInput(e.target.value)}
+                  placeholder={
+                    selectedSysGroupKey
+                      ? 'جستجو در شرح، کد پیگیری و فیش‌های دسته انتخابی...'
+                      : 'جستجو در شرح، کد پیگیری و فیش‌های سیستم...'
+                  }
+                  className="w-full pl-7 pr-8 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-800 placeholder-slate-400"
+                  id="input-search-sys"
+                />
+                {sysSearchInput && (
+                  <button
+                    type="button"
+                    onClick={handleClearSysSearch}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
+                    title="پاک کردن جستجو"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0 shadow-xs"
+                id="btn-search-sys"
+              >
+                <Search className="w-3.5 h-3.5" />
+                جستجو
+              </button>
+            </form>
+
+            {/* Active search filter badge */}
+            {sysActiveSearch && (
+              <div className="mt-2 flex items-center justify-between bg-blue-50 text-blue-900 px-2.5 py-1 rounded text-xs border border-blue-200">
+                <span className="flex items-center gap-1 truncate">
+                  <span className="font-semibold">فیلتر جستجو:</span> «{sysActiveSearch}»
+                  {selectedSysGroupKey && <span className="text-slate-500 text-[11px] mr-1">(در دسته انتخابی)</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearSysSearch}
+                  className="text-blue-700 hover:text-blue-900 font-bold text-[11px] underline flex items-center gap-0.5 mr-2 shrink-0 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  نمایش همه
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="p-3 overflow-y-auto max-h-[500px] space-y-2">
@@ -733,6 +1173,10 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                 const isSelectedGroup = selectedSysGroupKey === group.key;
                 const isExpanded = expandedSysGroups[group.key];
                 const isCredit = group.direction === 'CREDIT';
+
+                const matchingIndices = sysActiveSearch
+                  ? group.indices.filter((idx) => matchSystemRecord(sys_records[idx], sysActiveSearch))
+                  : group.indices;
 
                 return (
                   <div
@@ -765,6 +1209,17 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {sysActiveSearch && (
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                              matchingIndices.length > 0
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-slate-100 text-slate-400'
+                            }`}
+                          >
+                            {matchingIndices.length} از {group.indices.length} منطبق
+                          </span>
+                        )}
                         <span
                           className={`text-[11px] font-bold px-2 py-0.5 rounded ${
                             isCredit ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
@@ -781,37 +1236,57 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                     {/* Group Children (Rows) */}
                     {isExpanded && (
                       <div className="p-2 border-t border-slate-200 space-y-1.5 bg-slate-50/50">
-                        {group.indices.map((idx) => {
-                          const r = sys_records[idx];
-                          const isRowSelected = selectedSysRowIdx === idx;
-                          return (
-                            <div
-                              key={idx}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedSysRowIdx(idx);
-                                setSelectedSysGroupKey(group.key);
-                              }}
-                              className={`p-2 rounded text-xs transition-all cursor-pointer border ${
-                                isRowSelected
-                                  ? 'bg-blue-100/80 border-blue-400 font-semibold'
-                                  : isCredit
-                                  ? 'bg-emerald-50/70 border-emerald-100 hover:bg-emerald-100/60'
-                                  : 'bg-blue-50/70 border-blue-100 hover:bg-blue-100/60'
-                              }`}
+                        {matchingIndices.length === 0 ? (
+                          <div className="p-3 text-center text-xs text-amber-800 bg-amber-50 rounded-lg border border-amber-200">
+                            هیچ فیشی در این دسته با عبارت «{sysActiveSearch}» همخوانی ندارد.
+                            <button
+                              type="button"
+                              onClick={handleClearSysSearch}
+                              className="mr-2 text-blue-600 hover:text-blue-800 font-bold underline cursor-pointer"
                             >
-                              <div className="flex items-center justify-between font-bold text-slate-800">
-                                <span>ردیف اصلی: {r.original_row}</span>
-                                <span>{formatCurrency(r.amount)} ریال</span>
+                              نمایش همه فیش‌های این دسته
+                            </button>
+                          </div>
+                        ) : (
+                          matchingIndices.map((idx) => {
+                            const r = sys_records[idx];
+                            const isRowSelected = selectedSysRowIdx === idx;
+                            return (
+                              <div
+                                key={idx}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedSysRowIdx(idx);
+                                  setSelectedSysGroupKey(group.key);
+                                }}
+                                className={`p-2.5 rounded-lg text-xs transition-all cursor-pointer border ${
+                                  isRowSelected
+                                    ? 'bg-blue-100/90 border-blue-500 ring-2 ring-blue-300 font-semibold shadow-xs'
+                                    : isCredit
+                                    ? 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-100/60'
+                                    : 'bg-blue-50/70 border-blue-200 hover:bg-blue-100/60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between font-bold text-slate-800">
+                                  <span>ردیف اصلی: {highlightText(r.original_row, sysActiveSearch)}</span>
+                                  <span className="font-mono">{formatCurrency(r.amount)} ریال</span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                  {r.date && <span>📅 {highlightText(r.date, sysActiveSearch)}</span>}
+                                  {r.tracking_code && <span>🔢 رهگیری: {highlightText(r.tracking_code, sysActiveSearch)}</span>}
+                                  {r.account_name && <span>👤 طرف حساب: {highlightText(r.account_name, sysActiveSearch)}</span>}
+                                  {r.doc_type && <span>📄 {highlightText(r.doc_type, sysActiveSearch)}</span>}
+                                </div>
+                                {r.raw_desc && (
+                                  <div className="text-[11px] text-slate-700 bg-white/90 rounded px-2 py-1 mt-1.5 border border-slate-200/80 break-words">
+                                    <span className="font-semibold text-slate-500">📝 شرح: </span>
+                                    {highlightText(r.raw_desc, sysActiveSearch)}
+                                  </div>
+                                )}
                               </div>
-                              <div className="text-[11px] text-slate-600 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                                {r.date && <span>📅 {r.date}</span>}
-                                {r.tracking_code && <span>🔢 رهگیری: {r.tracking_code}</span>}
-                                {r.account_name && <span>👤 {r.account_name}</span>}
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })
+                        )}
                       </div>
                     )}
                   </div>
@@ -826,11 +1301,74 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
           <div className="bg-slate-100 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CreditCard className="w-4 h-4 text-indigo-700" />
-              <h3 className="font-bold text-slate-800 text-sm">فیش‌های صورتحساب بانک (ملت و ...)</h3>
+              <h3 className="font-bold text-slate-800 text-sm">فیش‌های صورتحساب بانک</h3>
             </div>
             <span className="text-xs font-semibold text-slate-500">
               {bankGroups.length} گروه مبلغی ({bankGroups.reduce((acc, g) => acc + g.indices.length, 0)} فیش)
             </span>
+          </div>
+
+          {/* Search Box in Bank Pane */}
+          <div className="p-2.5 bg-slate-50 border-b border-slate-200">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleBankSearch();
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={bankSearchInput}
+                  onChange={(e) => setBankSearchInput(e.target.value)}
+                  placeholder={
+                    selectedBankGroupKey
+                      ? 'جستجو در شرح، سریال، شناسه و فیش‌های دسته انتخابی...'
+                      : 'جستجو در شرح، سریال، شناسه و فیش‌های بانک...'
+                  }
+                  className="w-full pl-7 pr-8 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800 placeholder-slate-400"
+                  id="input-search-bank"
+                />
+                {bankSearchInput && (
+                  <button
+                    type="button"
+                    onClick={handleClearBankSearch}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
+                    title="پاک کردن جستجو"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0 shadow-xs"
+                id="btn-search-bank"
+              >
+                <Search className="w-3.5 h-3.5" />
+                جستجو
+              </button>
+            </form>
+
+            {/* Active search filter badge */}
+            {bankActiveSearch && (
+              <div className="mt-2 flex items-center justify-between bg-indigo-50 text-indigo-900 px-2.5 py-1 rounded text-xs border border-indigo-200">
+                <span className="flex items-center gap-1 truncate">
+                  <span className="font-semibold">فیلتر جستجو:</span> «{bankActiveSearch}»
+                  {selectedBankGroupKey && <span className="text-slate-500 text-[11px] mr-1">(در دسته انتخابی)</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearBankSearch}
+                  className="text-indigo-700 hover:text-indigo-900 font-bold text-[11px] underline flex items-center gap-0.5 mr-2 shrink-0 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  نمایش همه
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="p-3 overflow-y-auto max-h-[500px] space-y-2">
@@ -843,6 +1381,10 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                 const isSelectedGroup = selectedBankGroupKey === group.key;
                 const isExpanded = expandedBankGroups[group.key];
                 const isCredit = group.direction === 'CREDIT';
+
+                const matchingIndices = bankActiveSearch
+                  ? group.indices.filter((idx) => matchBankRecord(bank_records[idx], bankActiveSearch))
+                  : group.indices;
 
                 return (
                   <div
@@ -878,6 +1420,17 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {bankActiveSearch && (
+                          <span
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                              matchingIndices.length > 0
+                                ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                                : 'bg-slate-100 text-slate-400'
+                            }`}
+                          >
+                            {matchingIndices.length} از {group.indices.length} منطبق
+                          </span>
+                        )}
                         <span
                           className={`text-[11px] font-bold px-2 py-0.5 rounded ${
                             isCredit ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
@@ -894,39 +1447,57 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
                     {/* Group Children (Rows) */}
                     {isExpanded && (
                       <div className="p-2 border-t border-slate-200 space-y-1.5 bg-slate-50/50">
-                        {group.indices.map((idx) => {
-                          const r = bank_records[idx];
-                          const isRowSelected = selectedBankRowIdx === idx;
-                          return (
-                            <div
-                              key={idx}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedBankRowIdx(idx);
-                                setSelectedBankGroupKey(group.key);
-                              }}
-                              className={`p-2 rounded text-xs transition-all cursor-pointer border ${
-                                isRowSelected
-                                  ? 'bg-indigo-100/80 border-indigo-400 font-semibold'
-                                  : isCredit
-                                  ? 'bg-emerald-50/70 border-emerald-100 hover:bg-emerald-100/60'
-                                  : 'bg-blue-50/70 border-blue-100 hover:bg-blue-100/60'
-                              }`}
+                        {matchingIndices.length === 0 ? (
+                          <div className="p-3 text-center text-xs text-amber-800 bg-amber-50 rounded-lg border border-amber-200">
+                            هیچ فیشی در این دسته با عبارت «{bankActiveSearch}» همخوانی ندارد.
+                            <button
+                              type="button"
+                              onClick={handleClearBankSearch}
+                              className="mr-2 text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
                             >
-                              <div className="flex items-center justify-between font-bold text-slate-800">
-                                <span>ردیف اصلی: {r.original_row}</span>
-                                <span>{formatCurrency(r.amount)} ریال</span>
+                              نمایش همه فیش‌های این دسته
+                            </button>
+                          </div>
+                        ) : (
+                          matchingIndices.map((idx) => {
+                            const r = bank_records[idx];
+                            const isRowSelected = selectedBankRowIdx === idx;
+                            return (
+                              <div
+                                key={idx}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedBankRowIdx(idx);
+                                  setSelectedBankGroupKey(group.key);
+                                }}
+                                className={`p-2.5 rounded-lg text-xs transition-all cursor-pointer border ${
+                                  isRowSelected
+                                    ? 'bg-indigo-100/90 border-indigo-500 ring-2 ring-indigo-300 font-semibold shadow-xs'
+                                    : isCredit
+                                    ? 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-100/60'
+                                    : 'bg-blue-50/70 border-blue-200 hover:bg-blue-100/60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between font-bold text-slate-800">
+                                  <span>ردیف اصلی: {highlightText(r.original_row, bankActiveSearch)}</span>
+                                  <span className="font-mono">{formatCurrency(r.amount)} ریال</span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                  {r.date && <span>📅 {highlightText(r.date, bankActiveSearch)}</span>}
+                                  {r.serial_no && <span>🔢 سریال: {highlightText(r.serial_no, bankActiveSearch)}</span>}
+                                  {r.deposit_id && <span>🆔 شناسه: {highlightText(r.deposit_id, bankActiveSearch)}</span>}
+                                  {r.party_name && <span>👤 طرف حساب: {highlightText(r.party_name, bankActiveSearch)}</span>}
+                                </div>
+                                {(r.description || r.raw_desc) && (
+                                  <div className="text-[11px] text-slate-700 bg-white/90 rounded px-2 py-1 mt-1.5 border border-slate-200/80 break-words">
+                                    <span className="font-semibold text-slate-500">📝 شرح: </span>
+                                    {highlightText(r.description || r.raw_desc, bankActiveSearch)}
+                                  </div>
+                                )}
                               </div>
-                              <div className="text-[11px] text-slate-600 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                                {r.date && <span>📅 {r.date}</span>}
-                                {r.serial_no && <span>🔢 سریال: {r.serial_no}</span>}
-                                {r.deposit_id && <span>🆔 شناسه: {r.deposit_id}</span>}
-                                {r.party_name && <span>👤 {r.party_name}</span>}
-                                {r.description && <span className="truncate max-w-[200px]">📝 {r.description}</span>}
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })
+                        )}
                       </div>
                     )}
                   </div>
