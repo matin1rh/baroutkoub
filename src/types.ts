@@ -78,3 +78,32 @@ export interface ReconciliationSummary {
   total_bank_amount: number;
   matched_amount: number;
 }
+
+export type UserRole = 'ADMIN' | 'USER';
+export type SessionLockPolicy = 'STRICT_BLOCK' | 'KICK_PREVIOUS';
+
+export interface AuthenticatedUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  isActive: boolean;
+  expiresAt: string | null;
+  remainingDays: number | null;
+}
+
+export interface ManagedUserRecord {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  isActive: boolean;
+  expiresAt: string | null;
+  remainingDays: number | null;
+  isExpired: boolean;
+  hasActiveSession: boolean;
+  lastActiveAt: string | null;
+  lastDeviceInfo: string | null;
+  createdAt: string;
+}
+

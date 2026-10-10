@@ -1038,8 +1038,7 @@ export const ReviewTab: React.FC<ReviewTabProps> = ({
             <FilterX className="w-4 h-4" />
           </div>
           <div>
-            <h4 className="text-xs font-bold text-rose-950">رد دسته‌جمعی مبالغ خرد یا مشخص (مغایرت قطعی)</h4>
-            <p className="text-[11px] text-rose-800/80">فیش‌های بازبینی با مبلغ برابر یا کوچکتر از مقدار زیر، مستقیماً به لیست مغایرت‌های قرمز منتقل می‌شوند.</p>
+            <h4 className="text-xs font-bold text-rose-950">رد دسته‌جمعی مبالغ خرد</h4>
           </div>
         </div>
 

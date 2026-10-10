@@ -20,13 +20,9 @@ export const KnowledgeBaseTab: React.FC<KnowledgeBaseTabProps> = ({ decisions })
         </span>
       </div>
 
-      <p className="text-xs text-slate-500 leading-relaxed">
-        سیستم از تأییدها و ردهای دستی شما برای یادگیری و بهبود دقت تطبیق‌های بعدی استفاده می‌کند.
-      </p>
-
       {decisions.length === 0 ? (
         <div className="py-12 text-center text-slate-400 text-xs">
-          هنوز تصمیمی در پایگاه دانش ثبت نشده است. با تأیید یا رد موارد در تب «بازبینی تجمیعی»، تصمیمات شما در اینجا ذخیره خواهند شد.
+          هنوز تصمیمی در پایگاه دانش ثبت نشده است.
         </div>
       ) : (
         <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">

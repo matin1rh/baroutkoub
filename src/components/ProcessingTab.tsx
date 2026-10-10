@@ -315,7 +315,6 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-slate-800 text-base">فایل اکسل سیستم مالی</h3>
-                <p className="text-xs text-slate-500">حاوی ستون‌های بدهکار، بستانکار، کد رهگیری، نام حساب</p>
               </div>
             </div>
             {hasSys && (
@@ -339,9 +338,8 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
             />
             <FileSpreadsheet className="w-8 h-8 text-blue-600 mx-auto mb-2" />
             <p className="text-sm font-semibold text-slate-700">
-              {sysFileName || dataStore?.sys_name || 'انتخاب یا رها کردن فایل اکسل سیستم (xlsx)'}
+              {sysFileName || dataStore?.sys_name || 'انتخاب فایل اکسل سیستم'}
             </p>
-            <p className="text-xs text-slate-400 mt-1">کلیک کنید تا فایل سیستم را انتخاب کنید</p>
           </div>
 
           {/* System Column Mapping Dropdowns */}
@@ -442,13 +440,12 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 id="checkbox-sys-toman"
               />
               <span className="flex items-center gap-1.5">
-                <span>واحد مبالغ این فایل به <strong>تومان</strong> است</span>
-                <span className="text-[11px] font-normal text-slate-500">(ضرب در ۱۰ جهت تبدیل به ریال)</span>
+                <span>واحد مبالغ به <strong>تومان</strong></span>
               </span>
             </label>
             {sysIsToman && (
               <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-200 font-mono">
-                ×۱۰ ریال فعال
+                ×۱۰ ریال
               </span>
             )}
           </div>
@@ -468,7 +465,6 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-slate-800 text-base">فایل اکسل صورتحساب بانک</h3>
-                <p className="text-xs text-slate-500">حاوی ستون‌های گردش بدهکار/بستانکار، شرح، شناسه، سریال</p>
               </div>
             </div>
             {hasBank && (
@@ -492,9 +488,8 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
             />
             <FileSpreadsheet className="w-8 h-8 text-indigo-600 mx-auto mb-2" />
             <p className="text-sm font-semibold text-slate-700">
-              {bankFileName || dataStore?.bank_name || 'انتخاب یا رها کردن فایل صورتحساب بانک (xlsx)'}
+              {bankFileName || dataStore?.bank_name || 'انتخاب فایل صورتحساب بانک'}
             </p>
-            <p className="text-xs text-slate-400 mt-1">کلیک کنید تا فایل صورتحساب بانک را انتخاب کنید</p>
           </div>
 
           {/* Bank Column Mapping Dropdowns */}
@@ -595,13 +590,12 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 id="checkbox-bank-toman"
               />
               <span className="flex items-center gap-1.5">
-                <span>واحد مبالغ این فایل به <strong>تومان</strong> است</span>
-                <span className="text-[11px] font-normal text-slate-500">(ضرب در ۱۰ جهت تبدیل به ریال)</span>
+                <span>واحد مبالغ به <strong>تومان</strong></span>
               </span>
             </label>
             {bankIsToman && (
               <span className="text-[10px] font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-200 font-mono">
-                ×۱۰ ریال فعال
+                ×۱۰ ریال
               </span>
             )}
           </div>
@@ -702,19 +696,8 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                     className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
                     id="checkbox-comparison-direction"
                   />
-                  <span>مقایسه ستون‌ها به صورت معکوس (بستانکار ⟷ بدهکار)</span>
+                  <span>مقایسه معکوس (بستانکار ⟷ بدهکار)</span>
                 </label>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  {directionMode === 'INVERSE' ? (
-                    <span className="text-indigo-700 font-medium">
-                      ✓ حالت معکوس: ستون <strong>بستانکار سیستم</strong> با <strong>بدهکار بانک</strong> و ستون <strong>بدهکار سیستم</strong> با <strong>بستانکار بانک</strong> مقایسه می‌شود.
-                    </span>
-                  ) : (
-                    <span className="text-blue-700 font-medium">
-                      ✓ حالت مستقیم: ستون <strong>بدهکار سیستم</strong> با <strong>بدهکار بانک</strong> و ستون <strong>بستانکار سیستم</strong> با <strong>بستانکار بانک</strong> مقایسه می‌شود.
-                    </span>
-                  )}
-                </p>
               </div>
             </div>
 
@@ -779,9 +762,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 <span className="text-2xl font-extrabold text-emerald-700 font-mono">
                   {summary.green_count}
                 </span>
-                <span className="text-xs text-emerald-600 mr-1.5">فیش متصل</span>
               </div>
-              <p className="text-[11px] text-emerald-700/80 mt-1">تطبیق کامل مبلغ، کد رهگیری و نام</p>
             </div>
 
             {/* Yellow Matches */}
@@ -794,9 +775,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 <span className="text-2xl font-extrabold text-amber-700 font-mono">
                   {summary.yellow_count}
                 </span>
-                <span className="text-xs text-amber-600 mr-1.5">فیش محتمل</span>
               </div>
-              <p className="text-[11px] text-amber-700/80 mt-1">مبالغ مشابه چندگانه یا ریال/تومان</p>
             </div>
 
             {/* Red Unmatched */}
@@ -809,9 +788,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                 <span className="text-2xl font-extrabold text-rose-700 font-mono">
                   {summary.red_sys_count}
                 </span>
-                <span className="text-xs text-rose-600 mr-1.5">فیش بدون تطبیق</span>
               </div>
-              <p className="text-[11px] text-rose-700/80 mt-1">فاقد رکورد متناظر در بانک</p>
             </div>
 
             {/* Success Rate */}
@@ -825,7 +802,6 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
                   {summary.success_rate}%
                 </span>
               </div>
-              <p className="text-[11px] text-blue-700/80 mt-1">نسبت اسناد متصل به کل اسناد</p>
             </div>
           </div>
 
@@ -833,7 +809,7 @@ export const ProcessingTab: React.FC<ProcessingTabProps> = ({
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2 text-slate-700">
               <Download className="w-5 h-5 text-blue-600" />
-              <span className="font-bold text-sm">دانلود فایل‌های اکسل خروجی با رنگ‌بندی و تفکیک ستون‌ها:</span>
+              <span className="font-bold text-sm">دانلود خروجی اکسل:</span>
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5">
